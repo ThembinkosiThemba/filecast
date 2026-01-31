@@ -2,6 +2,10 @@
 
 A TUI file manager built with Rust. The project provides file navigation with persistent history tracking and file preview capabilities.
 
+<p align="start">
+  <img src="src/files.png" alt="files TUI Screenshot" width="600">
+</p>
+
 ## Features
 
 - **Smart Search**: Live filename filtering and content search using ripgrep/grep
