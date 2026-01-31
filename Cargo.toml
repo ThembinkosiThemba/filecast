@@ -1,0 +1,28 @@
+[package]
+name = "files"
+version = "0.1.0"
+edition = "2024"
+authors = ["Thembinkosi Mkhonta (thembinkosimkhonta01@gmail.com)"]
+
+description = "A TUI file manager built with Rust. The project provides file navigation with persistent history tracking and file preview capabilities."
+license = "MIT"
+homepage = "https://github.com/ThembinkosiThemba/files"
+repository = "https://github.com/ThembinkosiThemba/files"
+readme = "README.md"
+keywords = ["tool", "file-manager", "files", "manager", "cli"]
+include = ["src/**/*.rs", "Cargo.toml", "README.md"]
+
+
+[dependencies]
+anyhow = "1.0.100"
+chrono = "0.4.43"
+crossterm = "0.29.0"
+devicons = "0.6.12"
+opener = "0.8.4"
+ratatui = "0.30.0"
+rusqlite = {version = "0.38.0", features=["bundled"]}
+tokio = {version = "1.49.0", features = ["full", "process"]}
+
+[[bin]]
+name = "files"
+path = "src/main.rs"
