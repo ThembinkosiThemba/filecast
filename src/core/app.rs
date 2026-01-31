@@ -53,6 +53,10 @@ pub struct App {
     pub show_hidden: bool,
     pub filtered_file_list: Vec<DirEntry>,
     pub is_filtering: bool,
+
+    // Tab Completion State
+    pub completion_candidates: Vec<String>,
+    pub completion_index: usize,
 }
 
 impl App {
@@ -85,6 +89,9 @@ impl App {
             show_hidden: false,
             filtered_file_list: Vec::new(),
             is_filtering: false,
+
+            completion_candidates: Vec::new(),
+            completion_index: 0,
         })
     }
 
@@ -439,16 +446,109 @@ impl App {
         Ok(())
     }
 
+    fn handle_tab_completion(&mut self) -> Result<()> {
+        // If we don't have candidates yet, generate them
+        if self.completion_candidates.is_empty() {
+            let (prefix, word_to_complete) = self.extract_word_to_complete();
+
+            if word_to_complete.is_empty() {
+                return Ok(());
+            }
+
+            // Get all files/directories in current directory
+            let entries = fs::read_directory(&self.current_path, self.show_hidden)?;
+
+            // Find matching entries
+            let matches: Vec<String> = entries
+                .iter()
+                .filter(|entry| {
+                    entry.name.starts_with(&word_to_complete) && entry.name != ".."
+                })
+                .map(|entry| {
+                    if entry.is_dir {
+                        format!("{}/", entry.name)
+                    } else {
+                        entry.name.clone()
+                    }
+                })
+                .collect();
+
+            if matches.is_empty() {
+                self.status_message = String::from("No matches found");
+                return Ok(());
+            }
+
+            // If only one match, complete it immediately
+            if matches.len() == 1 {
+                self.command_input = format!("{}{}", prefix, matches[0]);
+                self.status_message = String::from("Completed");
+                return Ok(());
+            }
+
+            // Multiple matches - store them and start cycling
+            self.completion_candidates = matches;
+            self.completion_index = 0;
+            self.command_input = format!("{}{}", prefix, self.completion_candidates[0]);
+            self.status_message = format!(
+                "Match 1/{} (Tab to cycle)",
+                self.completion_candidates.len()
+            );
+        } else {
+            // Cycle through existing candidates
+            self.completion_index = (self.completion_index + 1) % self.completion_candidates.len();
+            let (prefix, _) = self.extract_word_to_complete();
+            self.command_input = format!("{}{}", prefix, self.completion_candidates[self.completion_index]);
+            self.status_message = format!(
+                "Match {}/{} (Tab to cycle)",
+                self.completion_index + 1,
+                self.completion_candidates.len()
+            );
+        }
+
+        Ok(())
+    }
+
+    fn extract_word_to_complete(&self) -> (String, String) {
+        let input = &self.command_input;
+
+        // Find the last word (after the last space)
+        if let Some(last_space_idx) = input.rfind(' ') {
+            let prefix = &input[..=last_space_idx];
+            let word = &input[last_space_idx + 1..];
+            (prefix.to_string(), word.to_string())
+        } else {
+            // No space found, the entire input is the word to complete
+            // But only complete if it looks like a filename (not a command)
+            // Allow completion for everything in command mode
+            (String::new(), input.to_string())
+        }
+    }
+
     async fn handle_command_mode(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Esc => {
                 self.mode = AppMode::Normal;
                 self.command_input.clear();
+                self.completion_candidates.clear();
+                self.completion_index = 0;
             }
-            KeyCode::Enter => self.execute_command().await?,
-            KeyCode::Char(c) => self.command_input.push(c),
+            KeyCode::Enter => {
+                self.completion_candidates.clear();
+                self.completion_index = 0;
+                self.execute_command().await?;
+            }
+            KeyCode::Tab => {
+                self.handle_tab_completion()?;
+            }
+            KeyCode::Char(c) => {
+                self.command_input.push(c);
+                self.completion_candidates.clear();
+                self.completion_index = 0;
+            }
             KeyCode::Backspace => {
                 self.command_input.pop();
+                self.completion_candidates.clear();
+                self.completion_index = 0;
             }
             _ => {}
         }

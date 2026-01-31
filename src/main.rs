@@ -1,6 +1,7 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::PathBuf;
 
 use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event as CrosstermEvent};
@@ -23,8 +24,8 @@ async fn main() -> Result<()> {
     //     std::fs::File::create("files-tui.log")?,
     // )?;
 
-    let db_path = Path::new("files-tui-history.db");
-    let db_conn = history::initialise(db_path)?;
+    let db_path = get_db_path()?;
+    let db_conn = history::initialise(&db_path)?;
 
     let mut terminal = setup_terminal()?;
 
@@ -35,6 +36,17 @@ async fn main() -> Result<()> {
     restore_terminal(terminal)?;
 
     Ok(())
+}
+
+fn get_db_path() -> Result<PathBuf> {
+    let config_dir = dirs::config_dir()
+        .context("Failed to get config directory")?
+        .join("files-tui");
+
+    fs::create_dir_all(&config_dir)
+        .context("Failed to create config directory")?;
+
+    Ok(config_dir.join("history.db"))
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
