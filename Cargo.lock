@@ -411,7 +411,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "files"
+name = "files-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",

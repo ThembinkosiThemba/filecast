@@ -18,13 +18,15 @@ A TUI file manager built with Rust. The project provides file navigation with pe
 
 ## Installation
 
-### From Crates
+### From Crates.io
 
-Installing directly from crates as a package
+Installing directly from crates.io:
 
 ```bash
-cargo install files
+cargo install files-tui
 ```
+
+This installs the binary as `files`.
 
 ### Building from Source
 
