@@ -1,4 +1,3 @@
-use devicons::FileIcon;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -10,20 +9,49 @@ use std::time::SystemTime;
 
 use crate::core::{
     app::{App, FocusedPane, PreviewState},
+    fs::DirEntry,
     mode::AppMode,
 };
 
-fn parse_hex_color(hex: &str) -> Option<Color> {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() != 6 {
-        return None;
+fn get_file_icon(entry: &DirEntry) -> (&'static str, Color) {
+    if entry.is_dir {
+        return ("📁", Color::Yellow);
     }
 
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    let extension = entry
+        .path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
-    Some(Color::Rgb(r, g, b))
+    match extension.as_str() {
+        // Images
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" | "ico" | "tiff" => {
+            ("🖼️", Color::Magenta)
+        }
+        // Videos
+        "mp4" | "avi" | "mkv" | "mov" | "wmv" | "flv" | "webm" | "m4v" | "mpeg" | "mpg" => {
+            ("🎬", Color::LightMagenta)
+        }
+        // Audio
+        "mp3" | "wav" | "flac" | "aac" | "ogg" | "wma" | "m4a" | "opus" => ("🎵", Color::Cyan),
+        // Documents
+        "pdf" | "doc" | "docx" | "txt" | "rtf" | "odt" => ("📝", Color::LightBlue),
+        "xls" | "xlsx" | "csv" | "ods" => ("📊", Color::Green),
+        "ppt" | "pptx" | "odp" => ("📊", Color::LightRed),
+        // Archives
+        "zip" | "tar" | "gz" | "bz2" | "7z" | "rar" | "xz" | "tgz" => ("📦", Color::LightYellow),
+        // Code files
+        "rs" | "py" | "js" | "ts" | "java" | "c" | "cpp" | "h" | "hpp" | "go" | "rb" | "php" => {
+            ("💻", Color::LightGreen)
+        }
+        "html" | "css" | "json" | "xml" | "yaml" | "yml" | "toml" => ("📋", Color::LightCyan),
+        // Executables
+        "exe" | "bin" | "sh" | "bat" | "cmd" => ("⚙️", Color::Red),
+        // Default
+        _ => ("📄", Color::White),
+    }
 }
 
 fn format_size(size: u64) -> String {
@@ -166,9 +194,8 @@ fn draw_file_list_pane(f: &mut Frame, app: &mut App, area: Rect) {
                 Style::default().fg(Color::White)
             };
 
-            let icon_data: FileIcon = entry.path.to_str().unwrap_or("").into();
-            let icon_color = parse_hex_color(icon_data.color).unwrap_or(Color::White);
-            let icon = Span::styled(icon_data.icon.to_string(), Style::default().fg(icon_color));
+            let (icon_str, icon_color) = get_file_icon(entry);
+            let icon = Span::styled(icon_str, Style::default().fg(icon_color));
 
             let name = Span::styled(entry.name.clone(), style);
             let size = Span::styled(format_size(entry.size), style);

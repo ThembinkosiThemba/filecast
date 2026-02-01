@@ -1,6 +1,6 @@
 [package]
 name = "files-tui"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 authors = ["Thembinkosi Mkhonta (thembinkosimkhonta01@gmail.com)"]
 
@@ -17,7 +17,6 @@ include = ["src/**/*.rs", "Cargo.toml", "README.md", "src/files.png"]
 anyhow = "1.0.100"
 chrono = "0.4.43"
 crossterm = "0.29.0"
-devicons = "0.6.12"
 dirs = "6.0.0"
 opener = "0.8.4"
 ratatui = "0.30.0"
