@@ -79,6 +79,10 @@ fn format_time(time: Option<SystemTime>) -> String {
 }
 
 pub fn draw(f: &mut Frame, app: &mut App) {
+    // Set black background for entire frame
+    let background = Block::default().style(Style::default().bg(Color::Black));
+    f.render_widget(background, f.area());
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -104,6 +108,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let header = Paragraph::new(path_str).style(
         Style::default()
             .fg(Color::Cyan)
+            .bg(Color::Black)
             .add_modifier(Modifier::BOLD),
     );
     f.render_widget(header, area);
@@ -124,7 +129,7 @@ fn draw_main_content(f: &mut Frame, app: &mut App, area: Rect) {
     draw_preview_pane(f, app, main_chunks[2]);
 }
 
-fn draw_history_pane(f: &mut Frame, app: &App, area: Rect) {
+fn draw_history_pane(f: &mut Frame, app: &mut App, area: Rect) {
     let is_focused = app.focused_pane == FocusedPane::History;
 
     let items: Vec<ListItem> = app
@@ -169,11 +174,12 @@ fn draw_history_pane(f: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .border_style(border_style),
+                .border_style(border_style)
+                .style(Style::default().bg(Color::Black)),
         )
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(Color::White).bg(Color::Black));
 
-    f.render_widget(list, area);
+    f.render_stateful_widget(list, area, &mut app.history_list_state);
 }
 
 fn draw_file_list_pane(f: &mut Frame, app: &mut App, area: Rect) {
@@ -237,11 +243,12 @@ fn draw_file_list_pane(f: &mut Frame, app: &mut App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(title.as_str())
-                .border_style(border_style),
+                .border_style(border_style)
+                .style(Style::default().bg(Color::Black)),
         )
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(Color::White).bg(Color::Black));
 
-    f.render_widget(list, area);
+    f.render_stateful_widget(list, area, &mut app.file_list_state);
 }
 
 fn draw_preview_pane(f: &mut Frame, app: &App, area: Rect) {
@@ -268,10 +275,12 @@ fn draw_preview_pane(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(border_style);
+        .border_style(border_style)
+        .style(Style::default().bg(Color::Black));
 
     let paragraph = Paragraph::new(content)
         .block(block)
+        .style(Style::default().bg(Color::Black))
         .wrap(Wrap { trim: true });
 
     f.render_widget(paragraph, area);
@@ -298,7 +307,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
     // Status Message
     let status_widget =
-        Paragraph::new(app.status_message.clone()).style(Style::default().fg(Color::White));
+        Paragraph::new(app.status_message.clone()).style(Style::default().fg(Color::White).bg(Color::Black));
     f.render_widget(status_widget, chunks[1]);
 
     // Keybinding Hints
@@ -308,7 +317,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         AppMode::Command => "Esc:Cancel | Enter:Execute",
         _ => "",
     };
-    let hints_widget = Paragraph::new(hints).style(Style::default().fg(Color::DarkGray));
+    let hints_widget = Paragraph::new(hints).style(Style::default().fg(Color::DarkGray).bg(Color::Black));
     f.render_widget(hints_widget, chunks[2]);
 }
 

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::widgets::ListState;
 use rusqlite::Connection;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -37,6 +38,8 @@ pub struct App {
     // UI State
     pub focused_pane: FocusedPane,
     pub history_selected_index: usize,
+    pub file_list_state: ListState,
+    pub history_list_state: ListState,
 
     // History State (Temporary Navigation)
     pub history: Vec<PathBuf>,
@@ -65,6 +68,11 @@ impl App {
         let initial_list = fs::read_directory(&initial_path, false)?;
         let recent_files = history_fs::get_recent_files(&db_conn, 10).unwrap_or_default();
 
+        let mut file_list_state = ListState::default();
+        file_list_state.select(Some(0));
+        let mut history_list_state = ListState::default();
+        history_list_state.select(Some(0));
+
         Ok(App {
             current_path: initial_path.clone(),
             file_list: initial_list,
@@ -76,6 +84,8 @@ impl App {
 
             focused_pane: FocusedPane::FileList,
             history_selected_index: 0,
+            file_list_state,
+            history_list_state,
 
             history: vec![initial_path],
             history_index: 0,
@@ -121,6 +131,7 @@ impl App {
         self.current_path = path;
         self.file_list = entries;
         self.selected_index = 0;
+        self.file_list_state.select(Some(0));
         self.update_preview();
     }
 
@@ -136,6 +147,7 @@ impl App {
         let entries = fs::read_directory(&self.current_path, self.show_hidden)?;
         self.file_list = entries;
         self.selected_index = 0;
+        self.file_list_state.select(Some(0));
         self.update_preview();
         Ok(())
     }
@@ -179,6 +191,7 @@ impl App {
             .collect();
         self.is_filtering = true;
         self.selected_index = 0;
+        self.file_list_state.select(Some(0));
     }
 
     pub fn get_display_list(&self) -> &[DirEntry] {
@@ -574,6 +587,7 @@ impl App {
                 }
                 let new_index = (self.selected_index as i32 + delta).rem_euclid(len) as usize;
                 self.selected_index = new_index;
+                self.file_list_state.select(Some(new_index));
                 self.update_preview();
             }
             FocusedPane::History => {
@@ -584,6 +598,7 @@ impl App {
                 let new_index =
                     (self.history_selected_index as i32 + delta).rem_euclid(len) as usize;
                 self.history_selected_index = new_index;
+                self.history_list_state.select(Some(new_index));
             }
             FocusedPane::Preview => {
                 // Preview pane doesn't have navigation
