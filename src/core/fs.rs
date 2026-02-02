@@ -35,7 +35,6 @@ impl DirEntry {
 pub fn read_directory(path: &Path, show_hidden: bool) -> Result<Vec<DirEntry>> {
     let mut entries = Vec::new();
 
-    // Add parent directory entry (..)
     if path.parent().is_some() {
         entries.push(DirEntry {
             path: path.parent().unwrap().to_path_buf(),
@@ -50,7 +49,6 @@ pub fn read_directory(path: &Path, show_hidden: bool) -> Result<Vec<DirEntry>> {
         let entry = entry?;
         let path = entry.path();
 
-        // Skip hidden files/directories (starting with .) unless show_hidden is true
         if !show_hidden
             && path
                 .file_name()

@@ -1,28 +1,31 @@
 [package]
-name = "files-tui"
-version = "0.1.4"
+name = "filecast"
+version = "0.2.0"
 edition = "2024"
 authors = ["Thembinkosi Mkhonta (thembinkosimkhonta01@gmail.com)"]
 
-description = "A TUI file manager built with Rust. The project provides file navigation with persistent history tracking and file preview capabilities."
+description = "A fast Spotlight/Raycast-style launcher for Linux with fuzzy search, file browser, grep, and app launching."
 license = "MIT"
-homepage = "https://github.com/ThembinkosiThemba/files"
-repository = "https://github.com/ThembinkosiThemba/files"
+homepage = "https://github.com/ThembinkosiThemba/filecast"
+repository = "https://github.com/ThembinkosiThemba/filecast"
 readme = "README.md"
-keywords = ["tool", "file-manager", "files", "manager", "cli"]
-include = ["src/**/*.rs", "Cargo.toml", "README.md", "src/files.png"]
+keywords = ["launcher", "spotlight", "raycast", "linux", "productivity"]
+include = ["src/**/*.rs", "src/assets/*", "Cargo.toml", "README.md"]
 
 
 [dependencies]
 anyhow = "1.0.100"
 chrono = "0.4.43"
-crossterm = "0.29.0"
 dirs = "6.0.0"
+eframe = "0.30"
+egui = "0.30"
+freedesktop-desktop-entry = "0.7"
+global-hotkey = "0.6"
+image = "0.25"
 opener = "0.8.4"
-ratatui = "0.30.0"
 rusqlite = {version = "0.38.0", features=["bundled"]}
 tokio = {version = "1.49.0", features = ["full", "process"]}
 
 [[bin]]
-name = "files"
+name = "filecast"
 path = "src/main.rs"
