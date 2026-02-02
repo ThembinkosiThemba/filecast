@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Filecast
+Comment=Fast application launcher with fuzzy search
+Exec=filecast
+Icon=filecast
+Terminal=false
+Type=Application
+Categories=Utility;
+Keywords=launcher;search;files;apps;

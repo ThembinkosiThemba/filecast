@@ -29,3 +29,20 @@ tokio = {version = "1.49.0", features = ["full", "process"]}
 [[bin]]
 name = "filecast"
 path = "src/main.rs"
+
+[package.metadata.deb]
+maintainer = "Thembinkosi Mkhonta <thembinkosimkhonta01@gmail.com>"
+copyright = "2024, Thembinkosi Mkhonta"
+license-file = ["LICENSE", "0"]
+extended-description = """Filecast is a fast Spotlight/Raycast-style application launcher for Linux.
+Features include fuzzy search for apps and files, file browser with vim-style navigation,
+grep search through file contents, and shell command execution."""
+section = "utility"
+priority = "optional"
+assets = [
+    ["target/release/filecast", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/filecast/", "644"],
+    ["src/assets/icon.png", "usr/share/icons/hicolor/128x128/apps/filecast.png", "644"],
+    ["filecast.desktop", "usr/share/applications/filecast.desktop", "644"],
+]
+

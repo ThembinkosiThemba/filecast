@@ -22,11 +22,23 @@ publish-dry:
 package-list:
 	cargo package --list
 
+deb:
+	cargo deb
+	@echo "Deb package created in target/debian/"
+
+install-deb:
+	sudo dpkg -i target/debian/filecast_*.deb
+
 release:
 	cargo build --release
-	cargo run --release
-	cargo test --release
-	cargo clean
-	cargo doc --release
-	cargo publish --release
-	@echo "Release complete!"
+	cargo deb
+	@echo "Release complete! Binary: target/release/filecast, Deb: target/debian/"
+
+prepare:
+	cargo build --release
+	cargo deb
+	mkdir -p releases
+	cp target/debian/filecast_*.deb releases/
+	cp target/release/filecast releases/
+	@echo "Release files ready in releases/"
+	@ls -la releases/

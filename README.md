@@ -18,6 +18,14 @@ A fast Spotlight/Raycast-style launcher for Linux built with Rust and egui. Feat
 
 ## Installation
 
+### From .deb Package (Debian/Ubuntu)
+
+Download the latest `.deb` from [Releases](https://github.com/ThembinkosiThemba/filecast/releases) and install:
+
+```bash
+sudo dpkg -i filecast_*.deb
+```
+
 ### From Source
 
 ```bash

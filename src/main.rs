@@ -59,7 +59,6 @@ fn main() -> Result<()> {
         .with_inner_size([650.0, 450.0])
         .with_min_inner_size([650.0, 100.0])
         .with_decorations(false)
-        .with_transparent(true)
         .with_always_on_top()
         .with_resizable(false)
         .with_title("Filecast");
@@ -193,6 +192,6 @@ impl eframe::App for LauncherApp {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0] // Transparent background
+        [0.1, 0.1, 0.12, 1.0] // Dark background
     }
 }
