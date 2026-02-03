@@ -9,6 +9,14 @@ pub struct RecentAccess {
     pub access_count: i32,
 }
 
+#[derive(Clone)]
+pub struct CommandHistory {
+    pub command: String,
+    pub path: PathBuf,
+    pub last_run: DateTime<Utc>,
+    pub run_count: i32,
+}
+
 pub fn initialise(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
     conn.execute(
@@ -16,6 +24,16 @@ pub fn initialise(db_path: &Path) -> Result<Connection> {
             path TEXT PRIMARY KEY,
             last_accessed INTEGER NOT NULL,
             access_count INTEGER NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS command_history (
+            command TEXT NOT NULL,
+            path TEXT NOT NULL,
+            last_run INTEGER NOT NULL,
+            run_count INTEGER NOT NULL,
+            PRIMARY KEY (command, path)
         )",
         [],
     )?;
@@ -68,4 +86,55 @@ pub fn get_recent_files(conn: &Connection, limit: u32) -> Result<Vec<RecentAcces
     }
 
     Ok(recent_files)
+}
+
+pub fn log_command(conn: &Connection, command: &str, path: &Path) -> Result<()> {
+    let path_str = path.to_string_lossy().to_string();
+    let now = Utc::now().timestamp();
+
+    let mut stmt =
+        conn.prepare("SELECT run_count FROM command_history WHERE command = ?1 AND path = ?2")?;
+    let mut rows = stmt.query(params![command, path_str])?;
+
+    if let Some(row) = rows.next()? {
+        let run_count: i32 = row.get(0)?;
+        conn.execute(
+            "UPDATE command_history SET last_run = ?1, run_count = ?2 WHERE command = ?3 AND path = ?4",
+            params![now, run_count + 1, command, path_str],
+        )?;
+    } else {
+        conn.execute(
+            "INSERT INTO command_history (command, path, last_run, run_count) VALUES (?1, ?2, ?3, ?4)",
+            params![command, path_str, now, 1],
+        )?;
+    }
+
+    Ok(())
+}
+
+pub fn get_command_history(conn: &Connection, limit: u32) -> Result<Vec<CommandHistory>> {
+    let mut stmt = conn.prepare(
+        "SELECT command, path, last_run, run_count FROM command_history ORDER BY last_run DESC LIMIT ?1",
+    )?;
+
+    let iter = stmt.query_map(params![limit], |row| {
+        let command: String = row.get(0)?;
+        let path_str: String = row.get(1)?;
+        let last_run_ts: i64 = row.get(2)?;
+        let run_count: i32 = row.get(3)?;
+
+        Ok(CommandHistory {
+            command,
+            path: PathBuf::from(path_str),
+            last_run: Utc.timestamp_opt(last_run_ts, 0).unwrap(),
+            run_count,
+        })
+    })?;
+
+    let mut history = Vec::new();
+    for entry in iter {
+        history.push(entry?);
+    }
+
+    Ok(history)
 }

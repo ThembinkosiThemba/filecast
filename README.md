@@ -58,11 +58,11 @@ filecast
 
 #### Global
 
-| Key           | Action                               |
-| ------------- | ------------------------------------ |
-| `Super+Space`   | Toggle Filecast                                  |
-| `Ctrl+1/2/3/4`  | Switch views (Search/Files/Clipboard/Settings)   |
-| `Escape`        | Clear search / Unfocus / Hide / Back             |
+| Key            | Action                                         |
+| -------------- | ---------------------------------------------- |
+| `Super+Space`  | Toggle Filecast                                |
+| `Ctrl+1/2/3/4` | Switch views (Search/Files/Clipboard/Settings) |
+| `Escape`       | Clear search / Unfocus / Hide / Back           |
 
 #### Search View
 
@@ -85,12 +85,12 @@ filecast
 
 #### Clipboard View
 
-| Key    | Action                |
-| ------ | --------------------- |
-| `↑/↓` or `j/k` | Navigate entries |
-| `Enter` | Copy selected to clipboard |
-| `p`    | Pin / Unpin entry     |
-| `d`    | Delete entry          |
+| Key            | Action                     |
+| -------------- | -------------------------- |
+| `↑/↓` or `j/k` | Navigate entries           |
+| `Enter`        | Copy selected to clipboard |
+| `p`            | Pin / Unpin entry          |
+| `d`            | Delete entry               |
 
 Clipboard entries expire after 24 hours unless pinned.
 

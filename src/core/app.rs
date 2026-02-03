@@ -7,7 +7,7 @@ use super::mode::AppMode;
 use crate::core::apps::DesktopApp;
 use crate::core::clipboard::{self, ClipboardEntry, ClipboardMonitor};
 use crate::core::fs::{self, DirEntry};
-use crate::core::history::{self as history_fs, RecentAccess};
+use crate::core::history::{self as history_fs, CommandHistory, RecentAccess};
 use crate::core::search::{SearchResult, SearchResultKind};
 use crate::core::search_config::SearchConfig;
 
@@ -65,6 +65,9 @@ pub struct App {
     pub clipboard_monitor: ClipboardMonitor,
     pub last_clipboard_cleanup: Instant,
 
+    // Command History
+    pub command_history: Vec<CommandHistory>,
+
     // Search Config
     pub search_config: SearchConfig,
 }
@@ -85,6 +88,7 @@ impl App {
         let applications = apps::discover_applications();
         let clipboard_history = clipboard::get_history(&db_conn, 50).unwrap_or_default();
         let clipboard_monitor = ClipboardMonitor::start();
+        let command_history = history_fs::get_command_history(&db_conn, 20).unwrap_or_default();
         let search_config = SearchConfig::load();
 
         Ok(App {
@@ -120,6 +124,7 @@ impl App {
             clipboard_monitor,
             last_clipboard_cleanup: Instant::now(),
 
+            command_history,
             search_config,
         })
     }
@@ -139,12 +144,18 @@ impl App {
             self.search_query.clear();
             self.search_results.clear();
             self.refresh_history();
+            self.refresh_command_history();
         }
     }
 
     pub fn refresh_history(&mut self) {
         self.recent_files =
             history_fs::get_recent_files(&self.db_connection, 10).unwrap_or_default();
+    }
+
+    pub fn refresh_command_history(&mut self) {
+        self.command_history =
+            history_fs::get_command_history(&self.db_connection, 20).unwrap_or_default();
     }
 
     fn load_directory(&mut self, path: PathBuf, entries: Vec<DirEntry>) {

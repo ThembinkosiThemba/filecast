@@ -2,6 +2,7 @@ use egui::{CentralPanel, Context, Frame, Key, RichText, ScrollArea, TextEdit, Ui
 
 use crate::core::app::App;
 use crate::core::clipboard;
+use crate::core::history;
 use crate::core::search::SearchResultKind;
 use crate::core::settings::{LauncherSettings, LauncherView, WindowPosition};
 use crate::ui::theme;
@@ -27,6 +28,10 @@ pub struct LauncherUI {
     pub files_command_mode: bool,
     pub files_command_input: String,
     pub exclude_input: String,
+    pub selected_command_history: usize,
+    pub tab_completions: Vec<String>,
+    pub tab_completion_index: usize,
+    pub tab_original_token: String,
 }
 
 impl Default for LauncherUI {
@@ -42,6 +47,10 @@ impl Default for LauncherUI {
             files_command_mode: false,
             files_command_input: String::new(),
             exclude_input: String::new(),
+            selected_command_history: 0,
+            tab_completions: Vec::new(),
+            tab_completion_index: 0,
+            tab_original_token: String::new(),
         }
     }
 }
@@ -153,8 +162,9 @@ impl LauncherUI {
                         }
                     } else if app.search_query.is_empty() && !self.search_focused {
                         let recent_count = app.recent_files.len().min(5);
+                        let cmd_count = app.command_history.len().min(5);
                         let app_count = app.applications.len().min(5);
-                        let total = recent_count + app_count;
+                        let total = recent_count + cmd_count + app_count;
 
                         if total > 0 {
                             let current = self.selected_recent;
@@ -179,8 +189,16 @@ impl LauncherUI {
                                             let _ = app.open_file(path);
                                         }
                                     }
+                                } else if self.selected_recent < recent_count + cmd_count {
+                                    let cmd_idx = self.selected_recent - recent_count;
+                                    if let Some(cmd_entry) = app.command_history.get(cmd_idx) {
+                                        let cmd = cmd_entry.command.clone();
+                                        let path = cmd_entry.path.clone();
+                                        let _ = app.change_directory(path);
+                                        self.execute_command_sync(&cmd, app);
+                                    }
                                 } else {
-                                    let app_idx = self.selected_recent - recent_count;
+                                    let app_idx = self.selected_recent - recent_count - cmd_count;
                                     if let Some(desktop_app) = app.applications.get(app_idx) {
                                         let _ = desktop_app.launch();
                                     }
@@ -194,6 +212,20 @@ impl LauncherUI {
                         if i.key_pressed(Key::Escape) {
                             self.files_command_mode = false;
                             self.files_command_input.clear();
+                            self.tab_completions.clear();
+                        }
+                        if i.key_pressed(Key::Tab) && !self.files_command_input.is_empty() {
+                            self.handle_tab_completion(app);
+                        } else if i.key_pressed(Key::Tab) {
+                            // consume Tab when input is empty to prevent view switching
+                        } else if !i.key_pressed(Key::ArrowUp)
+                            && !i.key_pressed(Key::ArrowDown)
+                            && !i.key_pressed(Key::Enter)
+                            && !i.key_pressed(Key::Escape)
+                            && i.events.iter().any(|e| matches!(e, egui::Event::Text(_)))
+                        {
+                            // Any text input clears tab completions
+                            self.tab_completions.clear();
                         }
                         return;
                     }
@@ -423,6 +455,8 @@ impl LauncherUI {
         let mut should_run_command = false;
         let mut command_to_run = String::new();
 
+        let mut run_history_command: Option<(String, std::path::PathBuf)> = None;
+
         if self.files_command_mode {
             Frame::none()
                 .fill(theme::BG_SECONDARY)
@@ -436,7 +470,7 @@ impl LauncherUI {
                         let response = ui.add_sized(
                             [ui.available_width(), 22.0],
                             TextEdit::singleline(&mut self.files_command_input)
-                                .hint_text("Enter command and press Enter...")
+                                .hint_text("Enter command and press Enter... (Tab: complete)")
                                 .font(egui::FontId::monospace(14.0))
                                 .frame(false)
                                 .text_color(theme::TEXT_PRIMARY),
@@ -444,15 +478,104 @@ impl LauncherUI {
 
                         response.request_focus();
 
-                        if ui.input(|i| i.key_pressed(Key::Enter))
-                            && !self.files_command_input.is_empty()
-                        {
-                            should_run_command = true;
-                            command_to_run = self.files_command_input.clone();
+                        if ui.input(|i| i.key_pressed(Key::Enter)) {
+                            if !self.files_command_input.is_empty() {
+                                should_run_command = true;
+                                command_to_run = self.files_command_input.clone();
+                            } else if !app.command_history.is_empty() {
+                                // Enter on history item
+                                if let Some(entry) = app.command_history.get(self.selected_command_history) {
+                                    run_history_command = Some((entry.command.clone(), entry.path.clone()));
+                                }
+                            }
+                        }
+
+                        if ui.input(|i| i.key_pressed(Key::ArrowUp)) && self.files_command_input.is_empty() {
+                            if self.selected_command_history > 0 {
+                                self.selected_command_history -= 1;
+                            }
+                        }
+                        if ui.input(|i| i.key_pressed(Key::ArrowDown)) && self.files_command_input.is_empty() {
+                            let max = app.command_history.len().saturating_sub(1);
+                            if self.selected_command_history < max {
+                                self.selected_command_history += 1;
+                            }
                         }
                     });
                 });
+
+            // Show command history when input is empty
+            if self.files_command_input.is_empty() && !app.command_history.is_empty() {
+                ui.add_space(4.0);
+                let cmd_entries: Vec<_> = app
+                    .command_history
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, entry)| (idx, entry.command.clone(), entry.path.clone()))
+                    .collect();
+
+                ScrollArea::vertical()
+                    .max_height(120.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (idx, command, path) in &cmd_entries {
+                            let is_selected = *idx == self.selected_command_history;
+                            let bg_color = if is_selected {
+                                theme::BG_SELECTED
+                            } else {
+                                theme::BG_PRIMARY
+                            };
+
+                            let response = Frame::none()
+                                .fill(bg_color)
+                                .rounding(theme::ROUNDING / 2.0)
+                                .inner_margin(egui::Margin::symmetric(theme::PADDING, 3.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(">").size(12.0).color(theme::ACCENT));
+                                        ui.add_space(4.0);
+                                        ui.label(
+                                            RichText::new(format!("$ {}", command))
+                                                .color(if is_selected {
+                                                    theme::ACCENT
+                                                } else {
+                                                    theme::TEXT_PRIMARY
+                                                })
+                                                .size(12.0)
+                                                .monospace(),
+                                        );
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(
+                                                    RichText::new(path.to_string_lossy())
+                                                        .color(theme::TEXT_MUTED)
+                                                        .size(10.0),
+                                                );
+                                            },
+                                        );
+                                    });
+                                });
+
+                            if response.response.clicked() {
+                                run_history_command = Some((command.clone(), path.clone()));
+                            }
+                            if response.response.hovered() {
+                                self.selected_command_history = *idx;
+                            }
+                        }
+                    });
+            }
+
             ui.add_space(theme::SPACING);
+        }
+
+        if let Some((cmd, path)) = run_history_command {
+            let _ = app.change_directory(path);
+            self.execute_command_sync(&cmd, app);
+            self.files_command_mode = false;
+            self.files_command_input.clear();
+            self.selected_command_history = 0;
         }
 
         if should_run_command {
@@ -587,7 +710,7 @@ impl LauncherUI {
 
         ui.add_space(theme::SPACING);
         let hint = if self.files_command_mode {
-            "Enter: run command | Esc: cancel"
+            "Enter: run command | Tab: complete | ↑↓: history | Esc: cancel"
         } else {
             "↑↓ jk: Navigate | →l: Open | ←h: Up | r: Refresh | c: Command"
         };
@@ -892,6 +1015,10 @@ impl LauncherUI {
             return;
         }
 
+        // Persist command to history
+        let _ = history::log_command(&app.db_connection, command, &app.current_path);
+        app.refresh_command_history();
+
         let output = std::process::Command::new(parts[0])
             .args(&parts[1..])
             .current_dir(&app.current_path)
@@ -917,6 +1044,79 @@ impl LauncherUI {
             Err(e) => {
                 self.command_output = Some(format!("Failed: {}", e));
             }
+        }
+    }
+
+    fn handle_tab_completion(&mut self, app: &App) {
+        let input = &self.files_command_input;
+
+        // Find the last token (the part we're completing)
+        let last_space = input.rfind(' ').map(|i| i + 1).unwrap_or(0);
+        let partial = &input[last_space..];
+
+        if self.tab_completions.is_empty() {
+            // First Tab press — build completions list
+            self.tab_original_token = partial.to_string();
+            self.tab_completion_index = 0;
+
+            let (dir_to_search, prefix) = if let Some(slash_pos) = partial.rfind('/') {
+                // Partial contains a path separator — resolve the directory
+                let dir_part = &partial[..=slash_pos];
+                let file_part = &partial[slash_pos + 1..];
+                let resolved = app.current_path.join(dir_part);
+                (resolved, file_part.to_string())
+            } else {
+                (app.current_path.clone(), partial.to_string())
+            };
+
+            let prefix_lower = prefix.to_lowercase();
+
+            if let Ok(entries) = std::fs::read_dir(&dir_to_search) {
+                let mut matches: Vec<String> = Vec::new();
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.to_lowercase().starts_with(&prefix_lower) {
+                        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                        // Build the full replacement token
+                        let replacement = if let Some(slash_pos) = partial.rfind('/') {
+                            let dir_part = &partial[..=slash_pos];
+                            if is_dir {
+                                format!("{}{}/", dir_part, name)
+                            } else {
+                                format!("{}{}", dir_part, name)
+                            }
+                        } else if is_dir {
+                            format!("{}/", name)
+                        } else {
+                            name
+                        };
+
+                        // Escape spaces
+                        let replacement = if replacement.contains(' ') && !replacement.starts_with('"') {
+                            format!("\"{}\"", replacement)
+                        } else {
+                            replacement
+                        };
+
+                        matches.push(replacement);
+                    }
+                }
+                matches.sort();
+                self.tab_completions = matches;
+            }
+        } else {
+            // Subsequent Tab press — cycle
+            self.tab_completion_index = (self.tab_completion_index + 1) % self.tab_completions.len();
+        }
+
+        // Apply the completion
+        if let Some(completion) = self.tab_completions.get(self.tab_completion_index) {
+            let prefix_part = &self.files_command_input[..last_space];
+            self.files_command_input = if prefix_part.is_empty() {
+                completion.clone()
+            } else {
+                format!("{}{}", prefix_part, completion)
+            };
         }
     }
 
@@ -1072,6 +1272,7 @@ impl LauncherUI {
 
     fn draw_recent_and_apps(&mut self, ui: &mut Ui, app: &mut App) {
         let recent_count = app.recent_files.len().min(5);
+        let cmd_count = app.command_history.len().min(5);
 
         let recent_data: Vec<_> = app
             .recent_files
@@ -1090,6 +1291,20 @@ impl LauncherUI {
             })
             .collect();
 
+        let cmd_data: Vec<_> = app
+            .command_history
+            .iter()
+            .take(5)
+            .enumerate()
+            .map(|(idx, entry)| {
+                (
+                    idx,
+                    entry.command.clone(),
+                    entry.path.clone(),
+                )
+            })
+            .collect();
+
         let apps_data: Vec<_> = app
             .applications
             .iter()
@@ -1099,6 +1314,7 @@ impl LauncherUI {
             .collect();
 
         let mut clicked_recent: Option<(std::path::PathBuf, bool)> = None;
+        let mut clicked_cmd: Option<(String, std::path::PathBuf)> = None;
         let mut clicked_app: Option<crate::core::apps::DesktopApp> = None;
 
         ScrollArea::vertical()
@@ -1157,6 +1373,66 @@ impl LauncherUI {
                     ui.add_space(theme::SPACING);
                 }
 
+                if !cmd_data.is_empty() {
+                    ui.label(
+                        RichText::new("Recent Commands")
+                            .color(theme::TEXT_SECONDARY)
+                            .size(11.0),
+                    );
+                    ui.add_space(4.0);
+
+                    for (idx, command, path) in &cmd_data {
+                        let global_idx = recent_count + *idx;
+                        let is_selected = !self.search_focused && self.selected_recent == global_idx;
+                        let bg_color = if is_selected {
+                            theme::BG_SELECTED
+                        } else {
+                            theme::BG_PRIMARY
+                        };
+
+                        let response = Frame::none()
+                            .fill(bg_color)
+                            .rounding(theme::ROUNDING / 2.0)
+                            .inner_margin(egui::Margin::symmetric(theme::PADDING, 4.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(">").size(14.0).color(theme::ACCENT));
+                                    ui.add_space(theme::SPACING);
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            RichText::new(format!("$ {}", command))
+                                                .color(if is_selected {
+                                                    theme::ACCENT
+                                                } else {
+                                                    theme::TEXT_PRIMARY
+                                                })
+                                                .size(13.0)
+                                                .monospace(),
+                                        );
+                                        ui.label(
+                                            RichText::new(path.to_string_lossy())
+                                                .color(theme::TEXT_MUTED)
+                                                .size(10.0),
+                                        );
+                                    });
+                                });
+                            });
+
+                        if is_selected && self.scroll_to_selected {
+                            response.response.scroll_to_me(Some(egui::Align::Center));
+                        }
+
+                        if response.response.clicked() {
+                            clicked_cmd = Some((command.clone(), path.clone()));
+                        }
+                        if response.response.hovered() {
+                            self.selected_recent = global_idx;
+                        }
+                    }
+
+                    ui.add_space(theme::SPACING);
+                }
+
                 ui.label(
                     RichText::new("Applications")
                         .color(theme::TEXT_SECONDARY)
@@ -1165,7 +1441,7 @@ impl LauncherUI {
                 ui.add_space(4.0);
 
                 for (idx, name, desktop_app) in &apps_data {
-                    let global_idx = recent_count + *idx;
+                    let global_idx = recent_count + cmd_count + *idx;
                     let is_selected = !self.search_focused && self.selected_recent == global_idx;
                     let bg_color = if is_selected {
                         theme::BG_SELECTED
@@ -1207,7 +1483,7 @@ impl LauncherUI {
 
                 ui.add_space(theme::PADDING);
                 ui.label(
-                    RichText::new("Esc: unfocus search | ↑↓: navigate | Enter: open")
+                    RichText::new("Esc: unfocus search | ↑↓: navigate | Enter: open/run")
                         .color(theme::TEXT_MUTED)
                         .size(10.0),
                 );
@@ -1221,6 +1497,10 @@ impl LauncherUI {
             } else {
                 let _ = app.open_file(path);
             }
+        }
+        if let Some((cmd, path)) = clicked_cmd {
+            let _ = app.change_directory(path);
+            self.execute_command_sync(&cmd, app);
         }
         if let Some(desktop_app) = clicked_app {
             let _ = desktop_app.launch();
