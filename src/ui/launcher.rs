@@ -1,9 +1,17 @@
 use egui::{CentralPanel, Context, Frame, Key, RichText, ScrollArea, TextEdit, Ui};
 
 use crate::core::app::App;
+use crate::core::clipboard;
 use crate::core::search::SearchResultKind;
 use crate::core::settings::{LauncherSettings, LauncherView, WindowPosition};
 use crate::ui::theme;
+
+#[derive(Debug, Clone, Copy)]
+enum ClipboardAction {
+    Copy,
+    TogglePin,
+    Delete,
+}
 
 const OUTER_MARGIN: f32 = 16.0;
 const ITEM_HEIGHT: f32 = 36.0;
@@ -12,6 +20,7 @@ pub struct LauncherUI {
     pub selected_result: usize,
     pub selected_file: usize,
     pub selected_recent: usize,
+    pub selected_clipboard: usize,
     pub search_focused: bool,
     pub command_output: Option<String>,
     scroll_to_selected: bool,
@@ -25,6 +34,7 @@ impl Default for LauncherUI {
             selected_result: 0,
             selected_file: 0,
             selected_recent: 0,
+            selected_clipboard: 0,
             search_focused: true,
             command_output: None,
             scroll_to_selected: false,
@@ -65,6 +75,7 @@ impl LauncherUI {
                     match settings.current_view {
                         LauncherView::Search => self.draw_search_view(ui, app),
                         LauncherView::Files => self.draw_files_view(ui, app),
+                        LauncherView::Clipboard => self.draw_clipboard_view(ui, app),
                         LauncherView::Settings => self.draw_settings_view(ui, settings),
                     }
                 });
@@ -92,7 +103,7 @@ impl LauncherUI {
                             app.toggle_visibility();
                         }
                     }
-                    LauncherView::Files | LauncherView::Settings => {
+                    LauncherView::Files | LauncherView::Clipboard | LauncherView::Settings => {
                         settings.current_view = LauncherView::Search;
                     }
                 }
@@ -102,12 +113,13 @@ impl LauncherUI {
             if i.key_pressed(Key::Tab) && !self.search_focused && !self.files_command_mode {
                 settings.current_view = match settings.current_view {
                     LauncherView::Search => LauncherView::Files,
-                    LauncherView::Files => LauncherView::Settings,
+                    LauncherView::Files => LauncherView::Clipboard,
+                    LauncherView::Clipboard => LauncherView::Settings,
                     LauncherView::Settings => LauncherView::Search,
                 };
             }
 
-            // Ctrl+1/2/3 for quick view switching
+            // Ctrl+1/2/3/4 for quick view switching
             if i.modifiers.ctrl {
                 if i.key_pressed(Key::Num1) {
                     settings.current_view = LauncherView::Search;
@@ -116,6 +128,9 @@ impl LauncherUI {
                     settings.current_view = LauncherView::Files;
                 }
                 if i.key_pressed(Key::Num3) {
+                    settings.current_view = LauncherView::Clipboard;
+                }
+                if i.key_pressed(Key::Num4) {
                     settings.current_view = LauncherView::Settings;
                 }
             }
@@ -243,6 +258,46 @@ impl LauncherUI {
                         self.command_output = None;
                     }
                 }
+                LauncherView::Clipboard => {
+                    let count = app.clipboard_history.len();
+                    if count > 0 {
+                        if i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::J) {
+                            self.selected_clipboard =
+                                (self.selected_clipboard + 1).min(count.saturating_sub(1));
+                            self.scroll_to_selected = true;
+                        }
+                        if i.key_pressed(Key::ArrowUp) || i.key_pressed(Key::K) {
+                            self.selected_clipboard = self.selected_clipboard.saturating_sub(1);
+                            self.scroll_to_selected = true;
+                        }
+                        if i.key_pressed(Key::Enter) {
+                            if let Some(entry) = app.clipboard_history.get(self.selected_clipboard)
+                            {
+                                let _ = clipboard::copy_to_clipboard(&entry.content);
+                            }
+                        }
+                        if i.key_pressed(Key::P) {
+                            if let Some(entry) = app.clipboard_history.get(self.selected_clipboard)
+                            {
+                                let _ = clipboard::toggle_pin(&app.db_connection, entry.id);
+                                app.refresh_clipboard();
+                            }
+                        }
+                        if i.key_pressed(Key::D) || i.key_pressed(Key::X) {
+                            if let Some(entry) = app.clipboard_history.get(self.selected_clipboard)
+                            {
+                                let _ = clipboard::delete_entry(&app.db_connection, entry.id);
+                                app.refresh_clipboard();
+                                if self.selected_clipboard > 0
+                                    && self.selected_clipboard >= app.clipboard_history.len()
+                                {
+                                    self.selected_clipboard =
+                                        app.clipboard_history.len().saturating_sub(1);
+                                }
+                            }
+                        }
+                    }
+                }
                 LauncherView::Settings => {}
             }
         });
@@ -258,7 +313,8 @@ impl LauncherUI {
                     let tabs = [
                         (LauncherView::Search, "🔍 Search", "Ctrl+1"),
                         (LauncherView::Files, "📁 Files", "Ctrl+2"),
-                        (LauncherView::Settings, "☰ Settings", "Ctrl+3"),
+                        (LauncherView::Clipboard, "📋 Clipboard", "Ctrl+3"),
+                        (LauncherView::Settings, "☰ Settings", "Ctrl+4"),
                     ];
 
                     for (view, label, shortcut) in tabs {
@@ -767,6 +823,7 @@ impl LauncherUI {
 
     fn draw_results(&mut self, ui: &mut Ui, app: &mut App) {
         let mut clicked_idx: Option<usize> = None;
+        let mut reveal_idx: Option<usize> = None;
         let selected = self.selected_result;
 
         let results_data: Vec<_> = app
@@ -774,12 +831,12 @@ impl LauncherUI {
             .iter()
             .enumerate()
             .map(|(idx, result)| {
-                let type_label = match &result.kind {
-                    SearchResultKind::File(_) => "file",
-                    SearchResultKind::RecentFile(_) => "recent",
-                    SearchResultKind::Application(_) => "app",
-                    SearchResultKind::Command(_) => "cmd",
-                    SearchResultKind::GrepResult { .. } => "grep",
+                let (type_label, path) = match &result.kind {
+                    SearchResultKind::File(p) => ("file", Some(p.clone())),
+                    SearchResultKind::RecentFile(p) => ("recent", Some(p.clone())),
+                    SearchResultKind::Application(_) => ("app", None),
+                    SearchResultKind::Command(_) => ("cmd", None),
+                    SearchResultKind::GrepResult { path, .. } => ("grep", Some(path.clone())),
                 };
                 (
                     idx,
@@ -787,6 +844,7 @@ impl LauncherUI {
                     result.name.clone(),
                     result.description.clone(),
                     type_label,
+                    path,
                 )
             })
             .collect();
@@ -795,7 +853,7 @@ impl LauncherUI {
             .max_height(300.0)
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                for (idx, icon, name, description, type_text) in &results_data {
+                for (idx, icon, name, description, type_text, path) in &results_data {
                     let is_selected = *idx == selected;
                     let bg_color = if is_selected {
                         theme::BG_SELECTED
@@ -842,6 +900,21 @@ impl LauncherUI {
                                                 .font(theme::result_desc_font())
                                                 .color(theme::TEXT_MUTED),
                                         );
+
+                                        // Show reveal button for file-based results
+                                        if path.is_some() {
+                                            ui.add_space(theme::SPACING);
+                                            let reveal_btn = ui.add(
+                                                egui::Button::new(
+                                                    RichText::new("📂").size(12.0),
+                                                )
+                                                .frame(false),
+                                            );
+                                            if reveal_btn.clicked() {
+                                                reveal_idx = Some(*idx);
+                                            }
+                                            reveal_btn.on_hover_text("Open in folder");
+                                        }
                                     },
                                 );
                             });
@@ -863,6 +936,13 @@ impl LauncherUI {
             });
 
         self.scroll_to_selected = false;
+
+        // Handle reveal action
+        if let Some(idx) = reveal_idx {
+            if let Some((_, _, _, _, _, Some(path))) = results_data.get(idx) {
+                let _ = app.reveal_in_folder(path);
+            }
+        }
 
         if let Some(idx) = clicked_idx {
             let _ = app.execute_search_result(idx);
@@ -1051,6 +1131,213 @@ impl LauncherUI {
         if let Some(desktop_app) = clicked_app {
             let _ = desktop_app.launch();
         }
+    }
+
+    fn draw_clipboard_view(&mut self, ui: &mut Ui, app: &mut App) {
+        // Header
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Clipboard History")
+                    .color(theme::TEXT_PRIMARY)
+                    .size(16.0),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("Clear Old").size(11.0))
+                            .frame(true)
+                            .rounding(theme::ROUNDING / 2.0),
+                    )
+                    .clicked()
+                {
+                    let _ = clipboard::cleanup_expired(&app.db_connection);
+                    app.refresh_clipboard();
+                }
+            });
+        });
+        ui.add_space(theme::SPACING);
+
+        // Clipboard entries
+        let mut action: Option<(i64, ClipboardAction)> = None;
+        let selected = self.selected_clipboard;
+        let do_scroll = self.scroll_to_selected;
+        self.scroll_to_selected = false;
+
+        ScrollArea::vertical()
+            .max_height(320.0)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if app.clipboard_history.is_empty() {
+                    Frame::none()
+                        .fill(theme::BG_SECONDARY)
+                        .rounding(theme::ROUNDING)
+                        .inner_margin(theme::PADDING)
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(theme::PADDING);
+                                ui.label(
+                                    RichText::new("No clipboard history yet")
+                                        .color(theme::TEXT_MUTED)
+                                        .size(13.0),
+                                );
+                                ui.label(
+                                    RichText::new("Copy something to see it here")
+                                        .color(theme::TEXT_MUTED)
+                                        .size(11.0),
+                                );
+                                ui.add_space(theme::PADDING);
+                            });
+                        });
+                    return;
+                }
+
+                for (idx, entry) in app.clipboard_history.iter().enumerate() {
+                    let is_selected = idx == selected;
+                    let bg_color = if is_selected {
+                        theme::BG_SELECTED
+                    } else {
+                        theme::BG_PRIMARY
+                    };
+
+                    let response = Frame::none()
+                        .fill(bg_color)
+                        .rounding(theme::ROUNDING / 2.0)
+                        .inner_margin(egui::Margin::symmetric(theme::PADDING, 6.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                // Pin indicator
+                                let pin_icon = if entry.pinned { "📌" } else { "📄" };
+                                ui.label(RichText::new(pin_icon).size(14.0));
+                                ui.add_space(theme::SPACING);
+
+                                // Content preview (truncated)
+                                let preview: String = entry
+                                    .content
+                                    .chars()
+                                    .take(50)
+                                    .collect::<String>()
+                                    .replace('\n', " ")
+                                    .replace('\r', "");
+                                let display = if entry.content.len() > 50 {
+                                    format!("{}...", preview)
+                                } else {
+                                    preview
+                                };
+
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        RichText::new(&display)
+                                            .color(if is_selected {
+                                                theme::ACCENT
+                                            } else {
+                                                theme::TEXT_PRIMARY
+                                            })
+                                            .size(12.0),
+                                    );
+
+                                    // Timestamp
+                                    let time_ago = clipboard::format_time_ago(entry.created_at);
+                                    let pin_status = if entry.pinned { " • pinned" } else { "" };
+                                    ui.label(
+                                        RichText::new(format!("{}{}", time_ago, pin_status))
+                                            .color(theme::TEXT_MUTED)
+                                            .size(10.0),
+                                    );
+                                });
+
+                                // Action buttons on right
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        // Delete button
+                                        let del_btn = ui.add(
+                                            egui::Button::new(RichText::new("🗑").size(12.0))
+                                                .frame(false),
+                                        );
+                                        if del_btn.clicked() {
+                                            action = Some((entry.id, ClipboardAction::Delete));
+                                        }
+                                        del_btn.on_hover_text("Delete");
+
+                                        // Pin/Unpin button
+                                        let pin_btn_text = if entry.pinned { "📍" } else { "📌" };
+                                        let pin_btn = ui.add(
+                                            egui::Button::new(RichText::new(pin_btn_text).size(12.0))
+                                                .frame(false),
+                                        );
+                                        if pin_btn.clicked() {
+                                            action = Some((entry.id, ClipboardAction::TogglePin));
+                                        }
+                                        pin_btn.on_hover_text(if entry.pinned {
+                                            "Unpin"
+                                        } else {
+                                            "Pin (won't expire)"
+                                        });
+
+                                        // Copy button
+                                        let copy_btn = ui.add(
+                                            egui::Button::new(RichText::new("📋").size(12.0))
+                                                .frame(false),
+                                        );
+                                        if copy_btn.clicked() {
+                                            action = Some((entry.id, ClipboardAction::Copy));
+                                        }
+                                        copy_btn.on_hover_text("Copy to clipboard");
+                                    },
+                                );
+                            });
+                        });
+
+                    // Scroll selected item into view
+                    if is_selected && do_scroll {
+                        ui.scroll_to_rect(response.response.rect, Some(egui::Align::Center));
+                    }
+
+                    // Handle click to select
+                    if response.response.clicked() {
+                        self.selected_clipboard = idx;
+                    }
+                    if response.response.hovered() && !is_selected {
+                        self.selected_clipboard = idx;
+                    }
+                    // Double-click to copy
+                    if response.response.double_clicked() {
+                        action = Some((entry.id, ClipboardAction::Copy));
+                    }
+                }
+            });
+
+        // Process actions outside UI closure
+        if let Some((id, action_type)) = action {
+            match action_type {
+                ClipboardAction::Copy => {
+                    if let Some(entry) = app.clipboard_history.iter().find(|e| e.id == id) {
+                        let _ = clipboard::copy_to_clipboard(&entry.content);
+                    }
+                }
+                ClipboardAction::TogglePin => {
+                    let _ = clipboard::toggle_pin(&app.db_connection, id);
+                    app.refresh_clipboard();
+                }
+                ClipboardAction::Delete => {
+                    let _ = clipboard::delete_entry(&app.db_connection, id);
+                    app.refresh_clipboard();
+                    if self.selected_clipboard > 0
+                        && self.selected_clipboard >= app.clipboard_history.len()
+                    {
+                        self.selected_clipboard = app.clipboard_history.len().saturating_sub(1);
+                    }
+                }
+            }
+        }
+
+        // Keyboard hint
+        ui.add_space(theme::SPACING);
+        ui.label(
+            RichText::new("↑↓ jk: Navigate | Enter: Copy | p: Pin | d: Delete")
+                .color(theme::TEXT_MUTED)
+                .size(10.0),
+        );
     }
 }
 

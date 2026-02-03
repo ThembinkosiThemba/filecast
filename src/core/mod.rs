@@ -1,7 +1,9 @@
 pub mod app;
 pub mod apps;
+pub mod clipboard;
 pub mod fs;
 pub mod history;
 pub mod mode;
 pub mod search;
+pub mod search_config;
 pub mod settings;

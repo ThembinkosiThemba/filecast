@@ -154,13 +154,18 @@ struct LauncherApp {
 
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Check for clipboard updates
+        self.app.check_clipboard_updates();
+
         // Check for hotkey events - toggle visibility
         while let Ok(_event) = self.hotkey_rx.try_recv() {
             self.app.window_visible = !self.app.window_visible;
             if self.app.window_visible {
-                // Reset search when showing
+                // Reset search and refresh history when showing
                 self.app.search_query.clear();
                 self.app.search_results.clear();
+                self.app.refresh_history();
+                self.app.refresh_clipboard();
                 self.ui.search_focused = true;
             }
         }

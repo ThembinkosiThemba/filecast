@@ -4,6 +4,7 @@ use std::process::Command;
 use crate::core::apps::DesktopApp;
 use crate::core::fs::DirEntry;
 use crate::core::history::RecentAccess;
+use crate::core::search_config::SearchConfig;
 
 #[derive(Debug, Clone)]
 pub enum SearchResultKind {
@@ -244,16 +245,28 @@ pub fn search_all(
 /// Search file contents using grep/ripgrep
 pub fn search_file_contents(pattern: &str) -> Vec<SearchResult> {
     let mut results = Vec::new();
+    let config = SearchConfig::load();
 
-    // Try ripgrep first, fall back to grep
-    let output = Command::new("rg")
-        .args(["-n", "-i", "--max-count", "20", pattern, "."])
-        .output()
-        .or_else(|_| {
-            Command::new("grep")
-                .args(["-r", "-n", "-i", pattern, "."])
-                .output()
-        });
+    // Try ripgrep first with exclusions
+    let output = {
+        let mut cmd = Command::new("rg");
+        cmd.args(["-n", "-i", "--max-count", "20"]);
+        for arg in config.rg_exclude_args() {
+            cmd.arg(&arg);
+        }
+        cmd.args([pattern, "."]);
+        cmd.output()
+    }
+    .or_else(|_| {
+        // Fall back to grep with exclusions
+        let mut cmd = Command::new("grep");
+        cmd.args(["-r", "-n", "-i"]);
+        for arg in config.grep_exclude_args() {
+            cmd.arg(&arg);
+        }
+        cmd.args([pattern, "."]);
+        cmd.output()
+    });
 
     if let Ok(output) = output {
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -278,16 +291,28 @@ pub fn search_file_contents(pattern: &str) -> Vec<SearchResult> {
 
 pub fn find_files(pattern: &str) -> Vec<SearchResult> {
     let mut results = Vec::new();
+    let config = SearchConfig::load();
 
-    // Try fd first (faster), fall back to find
-    let output = Command::new("fd")
-        .args(["-i", "--max-results", "20", pattern])
-        .output()
-        .or_else(|_| {
-            Command::new("find")
-                .args([".", "-iname", &format!("*{}*", pattern), "-maxdepth", "5"])
-                .output()
-        });
+    // Try fd first (faster) with exclusions
+    let output = {
+        let mut cmd = Command::new("fd");
+        cmd.args(["-i", "--max-results", "20"]);
+        for arg in config.fd_exclude_args() {
+            cmd.arg(&arg);
+        }
+        cmd.arg(pattern);
+        cmd.output()
+    }
+    .or_else(|_| {
+        // Fall back to find with exclusions
+        let mut cmd = Command::new("find");
+        cmd.args([".", "-maxdepth", "5"]);
+        for arg in config.find_exclude_args() {
+            cmd.arg(&arg);
+        }
+        cmd.args(["-iname", &format!("*{}*", pattern)]);
+        cmd.output()
+    });
 
     if let Ok(output) = output {
         let stdout = String::from_utf8_lossy(&output.stdout);

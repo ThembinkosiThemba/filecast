@@ -23,6 +23,7 @@ impl Default for WindowPosition {
 pub enum LauncherView {
     Search,
     Files,
+    Clipboard,
     Settings,
 }
 

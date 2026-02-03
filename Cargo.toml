@@ -1,6 +1,6 @@
 [package]
 name = "filecast"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 authors = ["Thembinkosi Mkhonta (thembinkosimkhonta01@gmail.com)"]
 
@@ -15,6 +15,7 @@ include = ["src/**/*.rs", "src/assets/*", "Cargo.toml", "README.md"]
 
 [dependencies]
 anyhow = "1.0.100"
+arboard = "3.4"
 chrono = "0.4.43"
 dirs = "6.0.0"
 eframe = "0.30"
@@ -24,6 +25,8 @@ global-hotkey = "0.6"
 image = "0.25"
 opener = "0.8.4"
 rusqlite = {version = "0.38.0", features=["bundled"]}
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
 tokio = {version = "1.49.0", features = ["full", "process"]}
 
 [[bin]]

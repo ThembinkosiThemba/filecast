@@ -29,6 +29,14 @@ deb:
 install-deb:
 	sudo dpkg -i target/debian/filecast_*.deb
 
+update:
+	@pkill filecast || true
+	@rm -f ~/.cargo/bin/filecast 2>/dev/null || true
+	cargo build --release
+	cargo deb
+	sudo dpkg -i target/debian/filecast_*.deb
+	@echo "Updated filecast installed successfully"
+
 release:
 	cargo build --release
 	cargo deb

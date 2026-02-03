@@ -1,10 +1,11 @@
 use anyhow::Result;
 use rusqlite::Connection;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::mode::AppMode;
 use crate::core::apps::DesktopApp;
+use crate::core::clipboard::{self, ClipboardEntry, ClipboardMonitor};
 use crate::core::fs::{self, DirEntry};
 use crate::core::history::{self as history_fs, RecentAccess};
 use crate::core::search::{SearchResult, SearchResultKind};
@@ -57,16 +58,29 @@ pub struct App {
     pub applications: Vec<DesktopApp>,
     pub search_results: Vec<SearchResult>,
     pub window_visible: bool,
+
+    // Clipboard State
+    pub clipboard_history: Vec<ClipboardEntry>,
+    pub clipboard_monitor: ClipboardMonitor,
+    pub last_clipboard_cleanup: Instant,
 }
 
 impl App {
     pub fn new(db_conn: Connection) -> Result<Self> {
         use crate::core::apps;
 
+        // Initialize clipboard table
+        clipboard::init_clipboard_table(&db_conn)?;
+
+        // Cleanup expired clipboard entries on startup
+        let _ = clipboard::cleanup_expired(&db_conn);
+
         let initial_path = std::env::current_dir()?;
         let initial_list = fs::read_directory(&initial_path, false)?;
         let recent_files = history_fs::get_recent_files(&db_conn, 10).unwrap_or_default();
         let applications = apps::discover_applications();
+        let clipboard_history = clipboard::get_history(&db_conn, 50).unwrap_or_default();
+        let clipboard_monitor = ClipboardMonitor::start();
 
         Ok(App {
             current_path: initial_path.clone(),
@@ -96,6 +110,10 @@ impl App {
             applications,
             search_results: Vec::new(),
             window_visible: true,
+
+            clipboard_history,
+            clipboard_monitor,
+            last_clipboard_cleanup: Instant::now(),
         })
     }
 
@@ -113,7 +131,13 @@ impl App {
         if self.window_visible {
             self.search_query.clear();
             self.search_results.clear();
+            self.refresh_history();
         }
+    }
+
+    pub fn refresh_history(&mut self) {
+        self.recent_files =
+            history_fs::get_recent_files(&self.db_connection, 10).unwrap_or_default();
     }
 
     fn load_directory(&mut self, path: PathBuf, entries: Vec<DirEntry>) {
@@ -263,6 +287,7 @@ impl App {
 
     pub fn open_file(&mut self, path: PathBuf) -> Result<()> {
         history_fs::log_access(&self.db_connection, &path)?;
+        self.refresh_history();
         opener::open(&path)?;
         self.status_message = format!(
             "Opened: {}",
@@ -324,5 +349,35 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Open the parent folder of a file in the file manager
+    pub fn reveal_in_folder(&self, path: &PathBuf) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            opener::open(parent)?;
+        }
+        Ok(())
+    }
+
+    /// Refresh clipboard history from database
+    pub fn refresh_clipboard(&mut self) {
+        self.clipboard_history =
+            clipboard::get_history(&self.db_connection, 50).unwrap_or_default();
+    }
+
+    /// Check for new clipboard entries from the monitor
+    pub fn check_clipboard_updates(&mut self) {
+        while let Ok(content) = self.clipboard_monitor.receiver.try_recv() {
+            if clipboard::add_entry(&self.db_connection, &content, "text").unwrap_or(false) {
+                self.refresh_clipboard();
+            }
+        }
+
+        // Periodic cleanup (every 5 minutes)
+        if self.last_clipboard_cleanup.elapsed() > Duration::from_secs(300) {
+            let _ = clipboard::cleanup_expired(&self.db_connection);
+            self.refresh_clipboard();
+            self.last_clipboard_cleanup = Instant::now();
+        }
     }
 }
