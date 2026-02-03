@@ -26,6 +26,7 @@ pub struct LauncherUI {
     scroll_to_selected: bool,
     pub files_command_mode: bool,
     pub files_command_input: String,
+    pub exclude_input: String,
 }
 
 impl Default for LauncherUI {
@@ -40,6 +41,7 @@ impl Default for LauncherUI {
             scroll_to_selected: false,
             files_command_mode: false,
             files_command_input: String::new(),
+            exclude_input: String::new(),
         }
     }
 }
@@ -50,10 +52,8 @@ impl LauncherUI {
     }
 
     pub fn show(&mut self, ctx: &Context, app: &mut App, settings: &mut LauncherSettings) {
-        // Configure theme on first frame
         theme::configure_style(ctx);
 
-        // Handle keyboard shortcuts
         self.handle_global_keys(ctx, app, settings);
 
         CentralPanel::default()
@@ -76,7 +76,7 @@ impl LauncherUI {
                         LauncherView::Search => self.draw_search_view(ui, app),
                         LauncherView::Files => self.draw_files_view(ui, app),
                         LauncherView::Clipboard => self.draw_clipboard_view(ui, app),
-                        LauncherView::Settings => self.draw_settings_view(ui, settings),
+                        LauncherView::Settings => self.draw_settings_view(ui, app, settings),
                     }
                 });
             });
@@ -109,7 +109,6 @@ impl LauncherUI {
                 }
             }
 
-            // Tab to cycle views (only when not in special modes)
             if i.key_pressed(Key::Tab) && !self.search_focused && !self.files_command_mode {
                 settings.current_view = match settings.current_view {
                     LauncherView::Search => LauncherView::Files,
@@ -119,7 +118,6 @@ impl LauncherUI {
                 };
             }
 
-            // Ctrl+1/2/3/4 for quick view switching
             if i.modifiers.ctrl {
                 if i.key_pressed(Key::Num1) {
                     settings.current_view = LauncherView::Search;
@@ -135,7 +133,6 @@ impl LauncherUI {
                 }
             }
 
-            // View-specific keys
             match settings.current_view {
                 LauncherView::Search => {
                     if !app.search_results.is_empty() {
@@ -146,8 +143,7 @@ impl LauncherUI {
                         }
                         if i.key_pressed(Key::ArrowUp) {
                             self.selected_result = self.selected_result.saturating_sub(1);
-                            self.scroll_to_selected = true;            // Tab to cycle views (only when not in special modes)
-
+                            self.scroll_to_selected = true;
                         }
                         if i.key_pressed(Key::Enter) && !self.search_focused {
                             let _ = app.execute_search_result(self.selected_result);
@@ -194,7 +190,6 @@ impl LauncherUI {
                     }
                 }
                 LauncherView::Files => {
-                    // Skip navigation if in command mode
                     if self.files_command_mode {
                         if i.key_pressed(Key::Escape) {
                             self.files_command_mode = false;
@@ -206,37 +201,39 @@ impl LauncherUI {
                     let file_count = app.get_display_list().len();
                     let old_selection = self.selected_file;
 
-                    // Down navigation
                     if i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::J) {
                         if file_count > 0 && self.selected_file < file_count.saturating_sub(1) {
                             self.selected_file += 1;
                         }
                     }
 
-                    // Up navigation
                     if i.key_pressed(Key::ArrowUp) || i.key_pressed(Key::K) {
                         if self.selected_file > 0 {
                             self.selected_file -= 1;
                         }
                     }
 
-                    // Only scroll if selection changed
                     if self.selected_file != old_selection {
                         app.selected_index = self.selected_file;
                         self.scroll_to_selected = true;
                     }
 
-                    // Enter directory / open file
                     if i.key_pressed(Key::Enter)
                         || i.key_pressed(Key::L)
                         || i.key_pressed(Key::ArrowRight)
                     {
+                        let is_dir = app
+                            .get_display_list()
+                            .get(self.selected_file)
+                            .map(|f| f.is_dir)
+                            .unwrap_or(false);
                         let _ = app.enter_selected();
-                        self.selected_file = 0;
-                        self.scroll_to_selected = true;
+                        if is_dir {
+                            self.selected_file = 0;
+                            self.scroll_to_selected = true;
+                        }
                     }
 
-                    // Go up directory
                     if i.key_pressed(Key::ArrowLeft)
                         || i.key_pressed(Key::H)
                         || i.key_pressed(Key::Backspace)
@@ -246,12 +243,10 @@ impl LauncherUI {
                         self.scroll_to_selected = true;
                     }
 
-                    // R to refresh
                     if i.key_pressed(Key::R) {
                         let _ = app.refresh_directory();
                     }
 
-                    // C to enter command mode
                     if i.key_pressed(Key::C) {
                         self.files_command_mode = true;
                         self.files_command_input.clear();
@@ -345,7 +340,6 @@ impl LauncherUI {
         self.draw_search_input(ui, app);
         ui.add_space(theme::SPACING);
 
-        // Show search hints when empty
         if app.search_query.is_empty() && app.search_results.is_empty() {
             self.draw_recent_and_apps(ui, app);
         } else if app.search_query.starts_with(':') {
@@ -408,7 +402,6 @@ impl LauncherUI {
     }
 
     fn draw_files_view(&mut self, ui: &mut Ui, app: &mut App) {
-        // Path header
         Frame::none()
             .fill(theme::BG_SECONDARY)
             .rounding(theme::ROUNDING)
@@ -427,7 +420,6 @@ impl LauncherUI {
 
         ui.add_space(theme::SPACING);
 
-        // Command input (if in command mode)
         let mut should_run_command = false;
         let mut command_to_run = String::new();
 
@@ -452,7 +444,6 @@ impl LauncherUI {
 
                         response.request_focus();
 
-                        // Check for Enter key to run command
                         if ui.input(|i| i.key_pressed(Key::Enter))
                             && !self.files_command_input.is_empty()
                         {
@@ -464,14 +455,12 @@ impl LauncherUI {
             ui.add_space(theme::SPACING);
         }
 
-        // Execute command outside the UI closure
         if should_run_command {
             self.execute_command_sync(&command_to_run, app);
             self.files_command_mode = false;
             self.files_command_input.clear();
         }
 
-        // Command output
         if let Some(output) = &self.command_output {
             if !self.files_command_mode {
                 ScrollArea::vertical().max_height(80.0).show(ui, |ui| {
@@ -559,7 +548,6 @@ impl LauncherUI {
                             });
                         });
 
-                    // Scroll selected item into view
                     if is_selected && do_scroll {
                         ui.scroll_to_rect(response.response.rect, Some(egui::Align::Center));
                     }
@@ -573,7 +561,6 @@ impl LauncherUI {
                     }
                 }
 
-                // Ensure we have something to show even if empty
                 if file_count == 0 {
                     ui.label(
                         RichText::new("Empty directory")
@@ -586,11 +573,18 @@ impl LauncherUI {
         if let Some(idx) = action {
             self.selected_file = idx;
             app.selected_index = idx;
+            let is_dir = app
+                .get_display_list()
+                .get(idx)
+                .map(|f| f.is_dir)
+                .unwrap_or(false);
             let _ = app.enter_selected();
-            self.selected_file = 0;
+            if is_dir {
+                self.selected_file = 0;
+                self.scroll_to_selected = true;
+            }
         }
 
-        // Status bar
         ui.add_space(theme::SPACING);
         let hint = if self.files_command_mode {
             "Enter: run command | Esc: cancel"
@@ -600,7 +594,12 @@ impl LauncherUI {
         ui.label(RichText::new(hint).color(theme::TEXT_MUTED).size(10.0));
     }
 
-    fn draw_settings_view(&mut self, ui: &mut Ui, settings: &mut LauncherSettings) {
+    fn draw_settings_view(
+        &mut self,
+        ui: &mut Ui,
+        app: &mut App,
+        settings: &mut LauncherSettings,
+    ) {
         ui.label(
             RichText::new("Settings")
                 .color(theme::TEXT_PRIMARY)
@@ -608,120 +607,221 @@ impl LauncherUI {
         );
         ui.add_space(theme::PADDING);
 
-        // Position setting
-        Frame::none()
-            .fill(theme::BG_SECONDARY)
-            .rounding(theme::ROUNDING)
-            .inner_margin(theme::PADDING)
+        ScrollArea::vertical()
+            .max_height(350.0)
+            .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.label(
-                    RichText::new("Window Position")
-                        .color(theme::TEXT_PRIMARY)
-                        .size(14.0),
-                );
-                ui.add_space(theme::SPACING);
+                // Window Position
+                Frame::none()
+                    .fill(theme::BG_SECONDARY)
+                    .rounding(theme::ROUNDING)
+                    .inner_margin(theme::PADDING)
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new("Window Position")
+                                .color(theme::TEXT_PRIMARY)
+                                .size(14.0),
+                        );
+                        ui.add_space(theme::SPACING);
 
-                let positions = [
-                    (WindowPosition::TopCenter, "Top Center"),
-                    (WindowPosition::Center, "Center"),
-                    (WindowPosition::TopLeft, "Top Left"),
-                    (WindowPosition::TopRight, "Top Right"),
-                    (WindowPosition::BottomCenter, "Bottom Center"),
-                    (WindowPosition::BottomLeft, "Bottom Left"),
-                    (WindowPosition::BottomRight, "Bottom Right"),
-                ];
+                        let positions = [
+                            (WindowPosition::TopCenter, "Top Center"),
+                            (WindowPosition::Center, "Center"),
+                            (WindowPosition::TopLeft, "Top Left"),
+                            (WindowPosition::TopRight, "Top Right"),
+                            (WindowPosition::BottomCenter, "Bottom Center"),
+                            (WindowPosition::BottomLeft, "Bottom Left"),
+                            (WindowPosition::BottomRight, "Bottom Right"),
+                        ];
 
-                ui.horizontal_wrapped(|ui| {
-                    for (pos, label) in positions {
-                        let is_selected = std::mem::discriminant(&settings.position)
-                            == std::mem::discriminant(&pos);
-                        if ui.selectable_label(is_selected, label).clicked() {
-                            settings.position = pos;
-                            settings.save();
+                        ui.horizontal_wrapped(|ui| {
+                            for (pos, label) in positions {
+                                let is_selected = std::mem::discriminant(&settings.position)
+                                    == std::mem::discriminant(&pos);
+                                if ui.selectable_label(is_selected, label).clicked() {
+                                    settings.position = pos;
+                                    settings.save();
+                                }
+                            }
+                        });
+
+                        ui.add_space(theme::SPACING);
+                        ui.label(
+                            RichText::new("Restart required for position changes")
+                                .color(theme::TEXT_MUTED)
+                                .size(10.0),
+                        );
+                    });
+
+                ui.add_space(theme::PADDING);
+
+                // Search Exclusions
+                Frame::none()
+                    .fill(theme::BG_SECONDARY)
+                    .rounding(theme::ROUNDING)
+                    .inner_margin(theme::PADDING)
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new("Search Exclusions")
+                                .color(theme::TEXT_PRIMARY)
+                                .size(14.0),
+                        );
+                        ui.add_space(2.0);
+                        ui.label(
+                            RichText::new("Directories excluded from @ and / searches")
+                                .color(theme::TEXT_MUTED)
+                                .size(10.0),
+                        );
+                        ui.add_space(theme::SPACING);
+
+                        // Add new exclusion
+                        let mut add_dir = false;
+                        ui.horizontal(|ui| {
+                            let response = ui.add_sized(
+                                [ui.available_width() - 50.0, 20.0],
+                                TextEdit::singleline(&mut self.exclude_input)
+                                    .hint_text("e.g. node_modules")
+                                    .font(egui::FontId::monospace(12.0))
+                                    .frame(true)
+                                    .text_color(theme::TEXT_PRIMARY),
+                            );
+
+                            if ui
+                                .add(egui::Button::new(RichText::new("+").size(14.0)))
+                                .clicked()
+                                || (response.lost_focus()
+                                    && ui.input(|i| i.key_pressed(Key::Enter)))
+                            {
+                                add_dir = true;
+                            }
+                        });
+
+                        if add_dir {
+                            let dir = self.exclude_input.trim().to_string();
+                            if !dir.is_empty()
+                                && !app.search_config.exclude_dirs.contains(&dir)
+                            {
+                                app.search_config.exclude_dirs.push(dir);
+                                app.search_config.save();
+                            }
+                            self.exclude_input.clear();
                         }
-                    }
-                });
 
-                ui.add_space(theme::SPACING);
-                ui.label(
-                    RichText::new("Restart required for position changes")
-                        .color(theme::TEXT_MUTED)
-                        .size(10.0),
-                );
-            });
+                        ui.add_space(theme::SPACING);
 
-        ui.add_space(theme::PADDING);
+                        // List current exclusions
+                        let mut remove_idx: Option<usize> = None;
+                        let dirs: Vec<_> = app
+                            .search_config
+                            .exclude_dirs
+                            .iter()
+                            .enumerate()
+                            .map(|(i, d)| (i, d.clone()))
+                            .collect();
 
-        // Search tips
-        Frame::none()
-            .fill(theme::BG_SECONDARY)
-            .rounding(theme::ROUNDING)
-            .inner_margin(theme::PADDING)
-            .show(ui, |ui| {
-                ui.label(
-                    RichText::new("Search Syntax")
-                        .color(theme::TEXT_PRIMARY)
-                        .size(14.0),
-                );
-                ui.add_space(theme::SPACING);
+                        let max_width = ui.available_width();
+                        ui.allocate_ui(egui::vec2(max_width, 0.0), |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                                for (idx, dir) in &dirs {
+                                    let chip_text = format!("{} x", dir);
+                                    let btn = ui.add(
+                                        egui::Button::new(
+                                            RichText::new(&chip_text)
+                                                .size(11.0)
+                                                .monospace()
+                                                .color(theme::TEXT_PRIMARY),
+                                        )
+                                        .fill(theme::BG_PRIMARY)
+                                        .rounding(theme::ROUNDING / 2.0),
+                                    );
+                                    if btn.clicked() {
+                                        remove_idx = Some(*idx);
+                                    }
+                                    btn.on_hover_text("Click to remove");
+                                }
+                            });
+                        });
 
-                let tips = [
-                    ("query", "Fuzzy search apps & files"),
-                    ("@pattern", "Grep file contents"),
-                    ("/name", "Find files by name"),
-                    (":command", "Run shell command"),
-                ];
-
-                for (syntax, desc) in tips {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(syntax)
-                                .color(theme::ACCENT)
-                                .size(12.0)
-                                .monospace(),
-                        );
-                        ui.label(
-                            RichText::new(format!(" - {}", desc))
-                                .color(theme::TEXT_SECONDARY)
-                                .size(12.0),
-                        );
+                        if let Some(idx) = remove_idx {
+                            app.search_config.exclude_dirs.remove(idx);
+                            app.search_config.save();
+                        }
                     });
-                }
-            });
 
-        ui.add_space(theme::PADDING);
+                ui.add_space(theme::PADDING);
 
-        // Shortcuts
-        Frame::none()
-            .fill(theme::BG_SECONDARY)
-            .rounding(theme::ROUNDING)
-            .inner_margin(theme::PADDING)
-            .show(ui, |ui| {
-                ui.label(
-                    RichText::new("Keyboard Shortcuts")
-                        .color(theme::TEXT_PRIMARY)
-                        .size(14.0),
-                );
-                ui.add_space(theme::SPACING);
-
-                let shortcuts = [
-                    ("Super+Space", "Toggle Filecast"),
-                    ("Ctrl+1/2/3", "Switch views"),
-                    ("Escape", "Clear / Unfocus / Hide"),
-                    ("↑/↓", "Navigate"),
-                    ("Enter", "Execute / Open"),
-                ];
-
-                for (key, action) in shortcuts {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(key).color(theme::ACCENT).size(12.0));
+                // Search Syntax
+                Frame::none()
+                    .fill(theme::BG_SECONDARY)
+                    .rounding(theme::ROUNDING)
+                    .inner_margin(theme::PADDING)
+                    .show(ui, |ui| {
                         ui.label(
-                            RichText::new(format!(" - {}", action))
-                                .color(theme::TEXT_SECONDARY)
-                                .size(12.0),
+                            RichText::new("Search Syntax")
+                                .color(theme::TEXT_PRIMARY)
+                                .size(14.0),
                         );
+                        ui.add_space(theme::SPACING);
+
+                        let tips = [
+                            ("query", "Fuzzy search apps & files"),
+                            ("@pattern", "Grep file contents"),
+                            ("/name", "Find files by name"),
+                            (":command", "Run shell command"),
+                        ];
+
+                        for (syntax, desc) in tips {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(syntax)
+                                        .color(theme::ACCENT)
+                                        .size(12.0)
+                                        .monospace(),
+                                );
+                                ui.label(
+                                    RichText::new(format!(" - {}", desc))
+                                        .color(theme::TEXT_SECONDARY)
+                                        .size(12.0),
+                                );
+                            });
+                        }
                     });
-                }
+
+                ui.add_space(theme::PADDING);
+
+                // Keyboard Shortcuts
+                Frame::none()
+                    .fill(theme::BG_SECONDARY)
+                    .rounding(theme::ROUNDING)
+                    .inner_margin(theme::PADDING)
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new("Keyboard Shortcuts")
+                                .color(theme::TEXT_PRIMARY)
+                                .size(14.0),
+                        );
+                        ui.add_space(theme::SPACING);
+
+                        let shortcuts = [
+                            ("Super+Space", "Toggle Filecast"),
+                            ("Ctrl+1/2/3/4", "Switch views"),
+                            ("Escape", "Clear / Unfocus / Hide"),
+                            ("↑/↓", "Navigate"),
+                            ("Enter", "Execute / Open"),
+                        ];
+
+                        for (key, action) in shortcuts {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(key).color(theme::ACCENT).size(12.0));
+                                ui.label(
+                                    RichText::new(format!(" - {}", action))
+                                        .color(theme::TEXT_SECONDARY)
+                                        .size(12.0),
+                                );
+                            });
+                        }
+                    });
             });
     }
 
@@ -756,7 +856,6 @@ impl LauncherUI {
                         response.request_focus();
                     }
 
-                    // Handle Enter
                     if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                         if app.search_query.starts_with(':') {
                             let command = app
@@ -905,10 +1004,8 @@ impl LauncherUI {
                                         if path.is_some() {
                                             ui.add_space(theme::SPACING);
                                             let reveal_btn = ui.add(
-                                                egui::Button::new(
-                                                    RichText::new("📂").size(12.0),
-                                                )
-                                                .frame(false),
+                                                egui::Button::new(RichText::new("📂").size(12.0))
+                                                    .frame(false),
                                             );
                                             if reveal_btn.clicked() {
                                                 reveal_idx = Some(*idx);
@@ -937,14 +1034,11 @@ impl LauncherUI {
 
         self.scroll_to_selected = false;
 
-        // Handle reveal action
         if let Some(idx) = reveal_idx {
             if let Some((_, _, _, _, _, Some(path))) = results_data.get(idx) {
                 let _ = app.reveal_in_folder(path);
             }
-        }
-
-        if let Some(idx) = clicked_idx {
+        } else if let Some(idx) = clicked_idx {
             let _ = app.execute_search_result(idx);
             app.search_query.clear();
             app.search_results.clear();
@@ -1134,7 +1228,6 @@ impl LauncherUI {
     }
 
     fn draw_clipboard_view(&mut self, ui: &mut Ui, app: &mut App) {
-        // Header
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new("Clipboard History")
@@ -1157,7 +1250,6 @@ impl LauncherUI {
         });
         ui.add_space(theme::SPACING);
 
-        // Clipboard entries
         let mut action: Option<(i64, ClipboardAction)> = None;
         let selected = self.selected_clipboard;
         let do_scroll = self.scroll_to_selected;
@@ -1205,12 +1297,10 @@ impl LauncherUI {
                         .inner_margin(egui::Margin::symmetric(theme::PADDING, 6.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                // Pin indicator
                                 let pin_icon = if entry.pinned { "📌" } else { "📄" };
                                 ui.label(RichText::new(pin_icon).size(14.0));
                                 ui.add_space(theme::SPACING);
 
-                                // Content preview (truncated)
                                 let preview: String = entry
                                     .content
                                     .chars()
@@ -1235,7 +1325,6 @@ impl LauncherUI {
                                             .size(12.0),
                                     );
 
-                                    // Timestamp
                                     let time_ago = clipboard::format_time_ago(entry.created_at);
                                     let pin_status = if entry.pinned { " • pinned" } else { "" };
                                     ui.label(
@@ -1245,11 +1334,9 @@ impl LauncherUI {
                                     );
                                 });
 
-                                // Action buttons on right
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        // Delete button
                                         let del_btn = ui.add(
                                             egui::Button::new(RichText::new("🗑").size(12.0))
                                                 .frame(false),
@@ -1259,11 +1346,13 @@ impl LauncherUI {
                                         }
                                         del_btn.on_hover_text("Delete");
 
-                                        // Pin/Unpin button
-                                        let pin_btn_text = if entry.pinned { "📍" } else { "📌" };
+                                        let pin_btn_text =
+                                            if entry.pinned { "📍" } else { "📌" };
                                         let pin_btn = ui.add(
-                                            egui::Button::new(RichText::new(pin_btn_text).size(12.0))
-                                                .frame(false),
+                                            egui::Button::new(
+                                                RichText::new(pin_btn_text).size(12.0),
+                                            )
+                                            .frame(false),
                                         );
                                         if pin_btn.clicked() {
                                             action = Some((entry.id, ClipboardAction::TogglePin));
@@ -1274,7 +1363,6 @@ impl LauncherUI {
                                             "Pin (won't expire)"
                                         });
 
-                                        // Copy button
                                         let copy_btn = ui.add(
                                             egui::Button::new(RichText::new("📋").size(12.0))
                                                 .frame(false),
@@ -1288,26 +1376,22 @@ impl LauncherUI {
                             });
                         });
 
-                    // Scroll selected item into view
                     if is_selected && do_scroll {
                         ui.scroll_to_rect(response.response.rect, Some(egui::Align::Center));
                     }
 
-                    // Handle click to select
                     if response.response.clicked() {
                         self.selected_clipboard = idx;
                     }
                     if response.response.hovered() && !is_selected {
                         self.selected_clipboard = idx;
                     }
-                    // Double-click to copy
                     if response.response.double_clicked() {
                         action = Some((entry.id, ClipboardAction::Copy));
                     }
                 }
             });
 
-        // Process actions outside UI closure
         if let Some((id, action_type)) = action {
             match action_type {
                 ClipboardAction::Copy => {
@@ -1331,7 +1415,6 @@ impl LauncherUI {
             }
         }
 
-        // Keyboard hint
         ui.add_space(theme::SPACING);
         ui.label(
             RichText::new("↑↓ jk: Navigate | Enter: Copy | p: Pin | d: Delete")

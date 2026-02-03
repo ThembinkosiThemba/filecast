@@ -13,8 +13,10 @@ A fast Spotlight/Raycast-style launcher for Linux built with Rust and egui. Feat
 - **Grep Search** - Search file contents with `@pattern`
 - **Find Files** - Find files by name with `/pattern`
 - **Shell Commands** - Run commands with `:command` in Search or `c` in Files view
+- **Clipboard History** - Automatic clipboard tracking with pin and expiry support
 - **Global Hotkey** - `Super+Space` to toggle from anywhere
 - **Configurable Position** - Place the window where you want it
+- **Search Exclusions** - Configurable directory exclusions for search (`~/.config/filecast/search.yaml`)
 
 ## Installation
 
@@ -58,9 +60,9 @@ filecast
 
 | Key           | Action                               |
 | ------------- | ------------------------------------ |
-| `Super+Space` | Toggle Filecast                      |
-| `Ctrl+1/2/3`  | Switch views (Search/Files/Settings) |
-| `Escape`      | Clear search / Unfocus / Hide / Back |
+| `Super+Space`   | Toggle Filecast                                  |
+| `Ctrl+1/2/3/4`  | Switch views (Search/Files/Clipboard/Settings)   |
+| `Escape`        | Clear search / Unfocus / Hide / Back             |
 
 #### Search View
 
@@ -81,11 +83,23 @@ filecast
 | `c`                       | Enter command mode (run shell commands) |
 | `Escape`                  | Exit command mode                       |
 
+#### Clipboard View
+
+| Key    | Action                |
+| ------ | --------------------- |
+| `↑/↓` or `j/k` | Navigate entries |
+| `Enter` | Copy selected to clipboard |
+| `p`    | Pin / Unpin entry     |
+| `d`    | Delete entry          |
+
+Clipboard entries expire after 24 hours unless pinned.
+
 ### Views
 
 1. **Search** - Quick search for apps, files, grep, commands
 2. **Files** - File browser with vim-style navigation + command execution
-3. **Settings** - Configure window position
+3. **Clipboard** - Clipboard history with pin and expiry
+4. **Settings** - Configure window position
 
 ## Configuration
 

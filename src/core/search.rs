@@ -168,6 +168,7 @@ pub fn search_all(
     files: &[DirEntry],
     recent: &[RecentAccess],
     apps: &[DesktopApp],
+    config: &SearchConfig,
 ) -> Vec<SearchResult> {
     let mut results = Vec::new();
 
@@ -186,7 +187,7 @@ pub fn search_all(
     if query.starts_with('@') {
         let pattern = query.trim_start_matches('@').trim();
         if !pattern.is_empty() {
-            return search_file_contents(pattern);
+            return search_file_contents(pattern, config);
         }
         return results;
     }
@@ -194,7 +195,7 @@ pub fn search_all(
     if query.starts_with('/') {
         let pattern = query.trim_start_matches('/').trim();
         if !pattern.is_empty() {
-            return find_files(pattern);
+            return find_files(pattern, config);
         }
         return results;
     }
@@ -243,9 +244,8 @@ pub fn search_all(
 }
 
 /// Search file contents using grep/ripgrep
-pub fn search_file_contents(pattern: &str) -> Vec<SearchResult> {
+pub fn search_file_contents(pattern: &str, config: &SearchConfig) -> Vec<SearchResult> {
     let mut results = Vec::new();
-    let config = SearchConfig::load();
 
     // Try ripgrep first with exclusions
     let output = {
@@ -289,9 +289,8 @@ pub fn search_file_contents(pattern: &str) -> Vec<SearchResult> {
     results
 }
 
-pub fn find_files(pattern: &str) -> Vec<SearchResult> {
+pub fn find_files(pattern: &str, config: &SearchConfig) -> Vec<SearchResult> {
     let mut results = Vec::new();
-    let config = SearchConfig::load();
 
     // Try fd first (faster) with exclusions
     let output = {

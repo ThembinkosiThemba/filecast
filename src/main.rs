@@ -81,7 +81,7 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
-    eframe::run_native(
+    let result = eframe::run_native(
         "Filecast",
         options,
         Box::new(move |cc| {
@@ -96,8 +96,10 @@ fn main() -> Result<()> {
                 was_visible: true,
             }))
         }),
-    )
-    .map_err(|e| anyhow::anyhow!("Failed to run application: {}", e))
+    );
+
+    // Force exit to terminate background threads (hotkey listener, clipboard monitor)
+    std::process::exit(if result.is_ok() { 0 } else { 1 });
 }
 
 fn load_icon() -> Option<egui::IconData> {

@@ -9,6 +9,7 @@ use crate::core::clipboard::{self, ClipboardEntry, ClipboardMonitor};
 use crate::core::fs::{self, DirEntry};
 use crate::core::history::{self as history_fs, RecentAccess};
 use crate::core::search::{SearchResult, SearchResultKind};
+use crate::core::search_config::SearchConfig;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FocusedPane {
@@ -63,6 +64,9 @@ pub struct App {
     pub clipboard_history: Vec<ClipboardEntry>,
     pub clipboard_monitor: ClipboardMonitor,
     pub last_clipboard_cleanup: Instant,
+
+    // Search Config
+    pub search_config: SearchConfig,
 }
 
 impl App {
@@ -81,6 +85,7 @@ impl App {
         let applications = apps::discover_applications();
         let clipboard_history = clipboard::get_history(&db_conn, 50).unwrap_or_default();
         let clipboard_monitor = ClipboardMonitor::start();
+        let search_config = SearchConfig::load();
 
         Ok(App {
             current_path: initial_path.clone(),
@@ -114,6 +119,8 @@ impl App {
             clipboard_history,
             clipboard_monitor,
             last_clipboard_cleanup: Instant::now(),
+
+            search_config,
         })
     }
 
@@ -313,6 +320,7 @@ impl App {
             &self.file_list,
             &self.recent_files,
             &self.applications,
+            &self.search_config,
         );
 
         self.filter_files();
