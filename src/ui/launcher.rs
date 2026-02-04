@@ -32,6 +32,7 @@ pub struct LauncherUI {
     pub tab_completions: Vec<String>,
     pub tab_completion_index: usize,
     pub tab_original_token: String,
+    cursor_to_end: bool,
 }
 
 impl Default for LauncherUI {
@@ -51,6 +52,7 @@ impl Default for LauncherUI {
             tab_completions: Vec::new(),
             tab_completion_index: 0,
             tab_original_token: String::new(),
+            cursor_to_end: false,
         }
     }
 }
@@ -75,8 +77,8 @@ impl LauncherUI {
             )
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
-                    // Navigation tabs
-                    self.draw_tabs(ui, settings);
+                    // Navigation tabs with window controls
+                    self.draw_tabs(ui, app, settings);
 
                     ui.add_space(theme::SPACING);
 
@@ -119,27 +121,39 @@ impl LauncherUI {
             }
 
             if i.key_pressed(Key::Tab) && !self.search_focused && !self.files_command_mode {
-                settings.current_view = match settings.current_view {
+                let new_view = match settings.current_view {
                     LauncherView::Search => LauncherView::Files,
                     LauncherView::Files => LauncherView::Clipboard,
                     LauncherView::Clipboard => LauncherView::Settings,
                     LauncherView::Settings => LauncherView::Search,
                 };
+                if new_view != settings.current_view {
+                    self.scroll_to_selected = false;
+                }
+                settings.current_view = new_view;
             }
 
+            let mut switched_view = false;
             if i.modifiers.ctrl {
                 if i.key_pressed(Key::Num1) {
                     settings.current_view = LauncherView::Search;
+                    switched_view = true;
                 }
                 if i.key_pressed(Key::Num2) {
                     settings.current_view = LauncherView::Files;
+                    switched_view = true;
                 }
                 if i.key_pressed(Key::Num3) {
                     settings.current_view = LauncherView::Clipboard;
+                    switched_view = true;
                 }
                 if i.key_pressed(Key::Num4) {
                     settings.current_view = LauncherView::Settings;
+                    switched_view = true;
                 }
+            }
+            if switched_view {
+                self.scroll_to_selected = false;
             }
 
             match settings.current_view {
@@ -330,7 +344,7 @@ impl LauncherUI {
         });
     }
 
-    fn draw_tabs(&mut self, ui: &mut Ui, settings: &mut LauncherSettings) {
+    fn draw_tabs(&mut self, ui: &mut Ui, app: &mut App, settings: &mut LauncherSettings) {
         Frame::none()
             .fill(theme::BG_SECONDARY)
             .rounding(theme::ROUNDING)
@@ -364,6 +378,43 @@ impl LauncherUI {
                         response.on_hover_text(shortcut);
                         ui.add_space(theme::SPACING);
                     }
+
+                    // Window control buttons (right-aligned)
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Close button
+                        let close_btn = ui.add(
+                            egui::Button::new(
+                                RichText::new("  \u{2715}  ")
+                                    .color(theme::TEXT_SECONDARY)
+                                    .size(14.0),
+                            )
+                            .frame(false),
+                        );
+                        if close_btn.clicked() {
+                            app.should_quit = true;
+                        }
+                        if close_btn.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        close_btn.on_hover_text("Close");
+
+                        // Minimize button
+                        let min_btn = ui.add(
+                            egui::Button::new(
+                                RichText::new(" \u{2014} ")
+                                    .color(theme::TEXT_SECONDARY)
+                                    .size(14.0),
+                            )
+                            .frame(false),
+                        );
+                        if min_btn.clicked() {
+                            app.window_visible = false;
+                        }
+                        if min_btn.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        min_btn.on_hover_text("Minimize");
+                    });
                 });
             });
     }
@@ -416,7 +467,7 @@ impl LauncherUI {
 
         if let Some(output) = &self.command_output {
             ui.add_space(theme::SPACING);
-            ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
+            ScrollArea::vertical().id_salt("cmd_output_search").max_height(250.0).show(ui, |ui| {
                 Frame::none()
                     .fill(theme::BG_SECONDARY)
                     .rounding(theme::ROUNDING)
@@ -434,6 +485,11 @@ impl LauncherUI {
     }
 
     fn draw_files_view(&mut self, ui: &mut Ui, app: &mut App) {
+        // Defensive refresh: if file_list is empty and path exists, reload
+        if app.file_list.is_empty() && app.current_path.exists() {
+            let _ = app.refresh_directory();
+        }
+
         Frame::none()
             .fill(theme::BG_SECONDARY)
             .rounding(theme::ROUNDING)
@@ -478,6 +534,16 @@ impl LauncherUI {
 
                         response.request_focus();
 
+                        // Move cursor to end after tab completion
+                        if self.cursor_to_end {
+                            self.cursor_to_end = false;
+                            if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id) {
+                                let ccursor = egui::text::CCursor::new(self.files_command_input.chars().count());
+                                state.cursor.set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
+                                state.store(ui.ctx(), response.id);
+                            }
+                        }
+
                         if ui.input(|i| i.key_pressed(Key::Enter)) {
                             if !self.files_command_input.is_empty() {
                                 should_run_command = true;
@@ -515,6 +581,7 @@ impl LauncherUI {
                     .collect();
 
                 ScrollArea::vertical()
+                    .id_salt("cmd_history_scroll")
                     .max_height(120.0)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -586,7 +653,7 @@ impl LauncherUI {
 
         if let Some(output) = &self.command_output {
             if !self.files_command_mode {
-                ScrollArea::vertical().max_height(80.0).show(ui, |ui| {
+                ScrollArea::vertical().id_salt("cmd_output_files").max_height(80.0).show(ui, |ui| {
                     Frame::none()
                         .fill(theme::BG_SECONDARY)
                         .rounding(theme::ROUNDING)
@@ -625,6 +692,7 @@ impl LauncherUI {
         self.scroll_to_selected = false;
 
         ScrollArea::vertical()
+            .id_salt("files_scroll")
             .max_height(max_height)
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -731,6 +799,7 @@ impl LauncherUI {
         ui.add_space(theme::PADDING);
 
         ScrollArea::vertical()
+            .id_salt("settings_scroll")
             .max_height(350.0)
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -1117,6 +1186,7 @@ impl LauncherUI {
             } else {
                 format!("{}{}", prefix_part, completion)
             };
+            self.cursor_to_end = true;
         }
     }
 
@@ -1149,6 +1219,7 @@ impl LauncherUI {
             .collect();
 
         ScrollArea::vertical()
+            .id_salt("search_results_scroll")
             .max_height(300.0)
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -1318,6 +1389,7 @@ impl LauncherUI {
         let mut clicked_app: Option<crate::core::apps::DesktopApp> = None;
 
         ScrollArea::vertical()
+            .id_salt("recent_apps_scroll")
             .max_height(300.0)
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -1536,6 +1608,7 @@ impl LauncherUI {
         self.scroll_to_selected = false;
 
         ScrollArea::vertical()
+            .id_salt("clipboard_scroll")
             .max_height(320.0)
             .auto_shrink([false, false])
             .show(ui, |ui| {
