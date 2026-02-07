@@ -7,7 +7,7 @@ use super::mode::AppMode;
 use crate::core::apps::DesktopApp;
 use crate::core::clipboard::{self, ClipboardEntry, ClipboardMonitor};
 use crate::core::fs::{self, DirEntry};
-use crate::core::history::{self as history_fs, CommandHistory, RecentAccess};
+use crate::core::history::{self as history_fs, AppLaunchHistory, CommandHistory, RecentAccess};
 use crate::core::search::{SearchResult, SearchResultKind};
 use crate::core::search_config::SearchConfig;
 
@@ -68,6 +68,9 @@ pub struct App {
     // Command History
     pub command_history: Vec<CommandHistory>,
 
+    // App Launch History
+    pub app_launch_history: Vec<AppLaunchHistory>,
+
     // Search Config
     pub search_config: SearchConfig,
 }
@@ -89,6 +92,7 @@ impl App {
         let clipboard_history = clipboard::get_history(&db_conn, 50).unwrap_or_default();
         let clipboard_monitor = ClipboardMonitor::start();
         let command_history = history_fs::get_command_history(&db_conn, 20).unwrap_or_default();
+        let app_launch_history = history_fs::get_app_launch_history(&db_conn, 20).unwrap_or_default();
         let search_config = SearchConfig::load();
 
         Ok(App {
@@ -125,6 +129,7 @@ impl App {
             last_clipboard_cleanup: Instant::now(),
 
             command_history,
+            app_launch_history,
             search_config,
         })
     }
@@ -156,6 +161,11 @@ impl App {
     pub fn refresh_command_history(&mut self) {
         self.command_history =
             history_fs::get_command_history(&self.db_connection, 20).unwrap_or_default();
+    }
+
+    pub fn refresh_app_launch_history(&mut self) {
+        self.app_launch_history =
+            history_fs::get_app_launch_history(&self.db_connection, 20).unwrap_or_default();
     }
 
     fn load_directory(&mut self, path: PathBuf, entries: Vec<DirEntry>) {
@@ -352,8 +362,11 @@ impl App {
                 }
             }
             SearchResultKind::Application(app) => {
-                app.launch()?;
-                self.status_message = format!("Launched: {}", app.name);
+                let app_clone = app.clone();
+                let _ = history_fs::log_app_launch(&self.db_connection, &app_clone.name, &app_clone.path);
+                self.refresh_app_launch_history();
+                app_clone.launch()?;
+                self.status_message = format!("Launched: {}", app_clone.name);
             }
             SearchResultKind::Command(cmd) => {
                 self.command_input = cmd.clone();

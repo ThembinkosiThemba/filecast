@@ -17,6 +17,14 @@ pub struct CommandHistory {
     pub run_count: i32,
 }
 
+#[derive(Clone)]
+pub struct AppLaunchHistory {
+    pub app_name: String,
+    pub desktop_path: PathBuf,
+    pub last_launched: DateTime<Utc>,
+    pub launch_count: i32,
+}
+
 pub fn initialise(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
     conn.execute(
@@ -34,6 +42,15 @@ pub fn initialise(db_path: &Path) -> Result<Connection> {
             last_run INTEGER NOT NULL,
             run_count INTEGER NOT NULL,
             PRIMARY KEY (command, path)
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS app_launch_history (
+            app_name TEXT NOT NULL,
+            desktop_path TEXT PRIMARY KEY,
+            last_launched INTEGER NOT NULL,
+            launch_count INTEGER NOT NULL
         )",
         [],
     )?;
@@ -128,6 +145,57 @@ pub fn get_command_history(conn: &Connection, limit: u32) -> Result<Vec<CommandH
             path: PathBuf::from(path_str),
             last_run: Utc.timestamp_opt(last_run_ts, 0).unwrap(),
             run_count,
+        })
+    })?;
+
+    let mut history = Vec::new();
+    for entry in iter {
+        history.push(entry?);
+    }
+
+    Ok(history)
+}
+
+pub fn log_app_launch(conn: &Connection, app_name: &str, desktop_path: &Path) -> Result<()> {
+    let path_str = desktop_path.to_string_lossy().to_string();
+    let now = Utc::now().timestamp();
+
+    let mut stmt =
+        conn.prepare("SELECT launch_count FROM app_launch_history WHERE desktop_path = ?1")?;
+    let mut rows = stmt.query(params![path_str])?;
+
+    if let Some(row) = rows.next()? {
+        let launch_count: i32 = row.get(0)?;
+        conn.execute(
+            "UPDATE app_launch_history SET app_name = ?1, last_launched = ?2, launch_count = ?3 WHERE desktop_path = ?4",
+            params![app_name, now, launch_count + 1, path_str],
+        )?;
+    } else {
+        conn.execute(
+            "INSERT INTO app_launch_history (app_name, desktop_path, last_launched, launch_count) VALUES (?1, ?2, ?3, ?4)",
+            params![app_name, path_str, now, 1],
+        )?;
+    }
+
+    Ok(())
+}
+
+pub fn get_app_launch_history(conn: &Connection, limit: u32) -> Result<Vec<AppLaunchHistory>> {
+    let mut stmt = conn.prepare(
+        "SELECT app_name, desktop_path, last_launched, launch_count FROM app_launch_history ORDER BY last_launched DESC LIMIT ?1",
+    )?;
+
+    let iter = stmt.query_map(params![limit], |row| {
+        let app_name: String = row.get(0)?;
+        let path_str: String = row.get(1)?;
+        let last_launched_ts: i64 = row.get(2)?;
+        let launch_count: i32 = row.get(3)?;
+
+        Ok(AppLaunchHistory {
+            app_name,
+            desktop_path: PathBuf::from(path_str),
+            last_launched: Utc.timestamp_opt(last_launched_ts, 0).unwrap(),
+            launch_count,
         })
     })?;
 

@@ -33,6 +33,7 @@ pub struct LauncherUI {
     pub tab_completion_index: usize,
     pub tab_original_token: String,
     cursor_to_end: bool,
+    previous_view: Option<LauncherView>,
 }
 
 impl Default for LauncherUI {
@@ -53,6 +54,7 @@ impl Default for LauncherUI {
             tab_completion_index: 0,
             tab_original_token: String::new(),
             cursor_to_end: false,
+            previous_view: None,
         }
     }
 }
@@ -64,6 +66,13 @@ impl LauncherUI {
 
     pub fn show(&mut self, ctx: &Context, app: &mut App, settings: &mut LauncherSettings) {
         theme::configure_style(ctx);
+
+        // Detect view changes and force scroll sync when entering Files view
+        let view_changed = self.previous_view != Some(settings.current_view);
+        if view_changed {
+            self.scroll_to_selected = true;
+            self.previous_view = Some(settings.current_view);
+        }
 
         self.handle_global_keys(ctx, app, settings);
 
@@ -128,7 +137,7 @@ impl LauncherUI {
                     LauncherView::Settings => LauncherView::Search,
                 };
                 if new_view != settings.current_view {
-                    self.scroll_to_selected = false;
+                    self.scroll_to_selected = true;
                 }
                 settings.current_view = new_view;
             }
@@ -153,7 +162,7 @@ impl LauncherUI {
                 }
             }
             if switched_view {
-                self.scroll_to_selected = false;
+                self.scroll_to_selected = true;
             }
 
             match settings.current_view {
@@ -213,7 +222,9 @@ impl LauncherUI {
                                     }
                                 } else {
                                     let app_idx = self.selected_recent - recent_count - cmd_count;
-                                    if let Some(desktop_app) = app.applications.get(app_idx) {
+                                    if let Some(desktop_app) = app.applications.get(app_idx).cloned() {
+                                        let _ = history::log_app_launch(&app.db_connection, &desktop_app.name, &desktop_app.path);
+                                        app.refresh_app_launch_history();
                                         let _ = desktop_app.launch();
                                     }
                                 }
@@ -467,20 +478,23 @@ impl LauncherUI {
 
         if let Some(output) = &self.command_output {
             ui.add_space(theme::SPACING);
-            ScrollArea::vertical().id_salt("cmd_output_search").max_height(250.0).show(ui, |ui| {
-                Frame::none()
-                    .fill(theme::BG_SECONDARY)
-                    .rounding(theme::ROUNDING)
-                    .inner_margin(theme::PADDING)
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(output)
-                                .color(theme::TEXT_PRIMARY)
-                                .size(11.0)
-                                .monospace(),
-                        );
-                    });
-            });
+            ScrollArea::vertical()
+                .id_salt("cmd_output_search")
+                .max_height(250.0)
+                .show(ui, |ui| {
+                    Frame::none()
+                        .fill(theme::BG_SECONDARY)
+                        .rounding(theme::ROUNDING)
+                        .inner_margin(theme::PADDING)
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new(output)
+                                    .color(theme::TEXT_PRIMARY)
+                                    .size(11.0)
+                                    .monospace(),
+                            );
+                        });
+                });
         }
     }
 
@@ -538,8 +552,12 @@ impl LauncherUI {
                         if self.cursor_to_end {
                             self.cursor_to_end = false;
                             if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id) {
-                                let ccursor = egui::text::CCursor::new(self.files_command_input.chars().count());
-                                state.cursor.set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
+                                let ccursor = egui::text::CCursor::new(
+                                    self.files_command_input.chars().count(),
+                                );
+                                state
+                                    .cursor
+                                    .set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
                                 state.store(ui.ctx(), response.id);
                             }
                         }
@@ -550,18 +568,25 @@ impl LauncherUI {
                                 command_to_run = self.files_command_input.clone();
                             } else if !app.command_history.is_empty() {
                                 // Enter on history item
-                                if let Some(entry) = app.command_history.get(self.selected_command_history) {
-                                    run_history_command = Some((entry.command.clone(), entry.path.clone()));
+                                if let Some(entry) =
+                                    app.command_history.get(self.selected_command_history)
+                                {
+                                    run_history_command =
+                                        Some((entry.command.clone(), entry.path.clone()));
                                 }
                             }
                         }
 
-                        if ui.input(|i| i.key_pressed(Key::ArrowUp)) && self.files_command_input.is_empty() {
+                        if ui.input(|i| i.key_pressed(Key::ArrowUp))
+                            && self.files_command_input.is_empty()
+                        {
                             if self.selected_command_history > 0 {
                                 self.selected_command_history -= 1;
                             }
                         }
-                        if ui.input(|i| i.key_pressed(Key::ArrowDown)) && self.files_command_input.is_empty() {
+                        if ui.input(|i| i.key_pressed(Key::ArrowDown))
+                            && self.files_command_input.is_empty()
+                        {
                             let max = app.command_history.len().saturating_sub(1);
                             if self.selected_command_history < max {
                                 self.selected_command_history += 1;
@@ -599,7 +624,9 @@ impl LauncherUI {
                                 .inner_margin(egui::Margin::symmetric(theme::PADDING, 3.0))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new(">").size(12.0).color(theme::ACCENT));
+                                        ui.label(
+                                            RichText::new(">").size(12.0).color(theme::ACCENT),
+                                        );
                                         ui.add_space(4.0);
                                         ui.label(
                                             RichText::new(format!("$ {}", command))
@@ -653,20 +680,23 @@ impl LauncherUI {
 
         if let Some(output) = &self.command_output {
             if !self.files_command_mode {
-                ScrollArea::vertical().id_salt("cmd_output_files").max_height(80.0).show(ui, |ui| {
-                    Frame::none()
-                        .fill(theme::BG_SECONDARY)
-                        .rounding(theme::ROUNDING)
-                        .inner_margin(theme::PADDING)
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(output)
-                                    .color(theme::TEXT_PRIMARY)
-                                    .size(10.0)
-                                    .monospace(),
-                            );
-                        });
-                });
+                ScrollArea::vertical()
+                    .id_salt("cmd_output_files")
+                    .max_height(80.0)
+                    .show(ui, |ui| {
+                        Frame::none()
+                            .fill(theme::BG_SECONDARY)
+                            .rounding(theme::ROUNDING)
+                            .inner_margin(theme::PADDING)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(output)
+                                        .color(theme::TEXT_PRIMARY)
+                                        .size(10.0)
+                                        .monospace(),
+                                );
+                            });
+                    });
                 ui.add_space(theme::SPACING);
             }
         }
@@ -785,12 +815,7 @@ impl LauncherUI {
         ui.label(RichText::new(hint).color(theme::TEXT_MUTED).size(10.0));
     }
 
-    fn draw_settings_view(
-        &mut self,
-        ui: &mut Ui,
-        app: &mut App,
-        settings: &mut LauncherSettings,
-    ) {
+    fn draw_settings_view(&mut self, ui: &mut Ui, app: &mut App, settings: &mut LauncherSettings) {
         ui.label(
             RichText::new("Settings")
                 .color(theme::TEXT_PRIMARY)
@@ -890,9 +915,7 @@ impl LauncherUI {
 
                         if add_dir {
                             let dir = self.exclude_input.trim().to_string();
-                            if !dir.is_empty()
-                                && !app.search_config.exclude_dirs.contains(&dir)
-                            {
+                            if !dir.is_empty() && !app.search_config.exclude_dirs.contains(&dir) {
                                 app.search_config.exclude_dirs.push(dir);
                                 app.search_config.save();
                             }
@@ -1161,11 +1184,12 @@ impl LauncherUI {
                         };
 
                         // Escape spaces
-                        let replacement = if replacement.contains(' ') && !replacement.starts_with('"') {
-                            format!("\"{}\"", replacement)
-                        } else {
-                            replacement
-                        };
+                        let replacement =
+                            if replacement.contains(' ') && !replacement.starts_with('"') {
+                                format!("\"{}\"", replacement)
+                            } else {
+                                replacement
+                            };
 
                         matches.push(replacement);
                     }
@@ -1175,7 +1199,8 @@ impl LauncherUI {
             }
         } else {
             // Subsequent Tab press — cycle
-            self.tab_completion_index = (self.tab_completion_index + 1) % self.tab_completions.len();
+            self.tab_completion_index =
+                (self.tab_completion_index + 1) % self.tab_completions.len();
         }
 
         // Apply the completion
@@ -1367,13 +1392,7 @@ impl LauncherUI {
             .iter()
             .take(5)
             .enumerate()
-            .map(|(idx, entry)| {
-                (
-                    idx,
-                    entry.command.clone(),
-                    entry.path.clone(),
-                )
-            })
+            .map(|(idx, entry)| (idx, entry.command.clone(), entry.path.clone()))
             .collect();
 
         let apps_data: Vec<_> = app
@@ -1455,7 +1474,8 @@ impl LauncherUI {
 
                     for (idx, command, path) in &cmd_data {
                         let global_idx = recent_count + *idx;
-                        let is_selected = !self.search_focused && self.selected_recent == global_idx;
+                        let is_selected =
+                            !self.search_focused && self.selected_recent == global_idx;
                         let bg_color = if is_selected {
                             theme::BG_SELECTED
                         } else {
@@ -1575,6 +1595,8 @@ impl LauncherUI {
             self.execute_command_sync(&cmd, app);
         }
         if let Some(desktop_app) = clicked_app {
+            let _ = history::log_app_launch(&app.db_connection, &desktop_app.name, &desktop_app.path);
+            app.refresh_app_launch_history();
             let _ = desktop_app.launch();
         }
     }
